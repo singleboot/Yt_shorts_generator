@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Shorts Creator</title>
+  </head>
+  <body>
+    <div id="root">
+      <div style="padding:40px;font-family:monospace;background:#fff;color:#000;">
+        <h2>Loading AI Shorts Creator...</h2>
+        <div id="error-log"></div>
+      </div>
+    </div>
+    <script>
+      window.onerror = function(msg, url, line, col, error) {
+        var el = document.getElementById('error-log');
+        if (el) {
+          el.innerHTML += '<div style="color:red;margin:10px 0;padding:10px;border:1px solid red;"><b>JS Error:</b> ' + msg + '<br>File: ' + url + '<br>Line: ' + line + ':' + col + (error ? '<br>Stack: ' + error.stack : '') + '</div>';
+        }
+        return false;
+      };
+      window.addEventListener('unhandledrejection', function(e) {
+        var el = document.getElementById('error-log');
+        if (el) {
+          el.innerHTML += '<div style="color:orange;margin:10px 0;padding:10px;border:1px solid orange;"><b>Unhandled Promise:</b> ' + (e.reason?.message || e.reason || 'unknown') + '</div>';
+        }
+      });
+    </script>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

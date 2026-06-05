@@ -1,0 +1,232 @@
+{
+  "1": {
+    "inputs": {
+      "text_encoder": "gemma_3_12B_it_fp4_mixed.safetensors",
+      "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors",
+      "device": "default"
+    },
+    "class_type": "LTXAVTextEncoderLoader",
+    "_meta": {
+      "title": "LTX 2.3 Text Encoder (Gemma 12B)"
+    }
+  },
+  "2": {
+    "inputs": {
+      "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Load LTX 2.3 Checkpoint"
+    }
+  },
+  "3": {
+    "inputs": {
+      "lora_name": "ltx2\\ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+      "strength_model": 0.5,
+      "model": ["2", 0]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Distilled LTX LoRA (Fixed)"
+    }
+  },
+  "4": {
+    "inputs": {
+      "lora_name": "ltx2\\gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors",
+      "strength_model": 1.0,
+      "strength_clip": 1.0,
+      "model": ["3", 0],
+      "clip": ["1", 0]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Gemma Abliterated LoRA (Fixed)"
+    }
+  },
+  "5": {
+    "inputs": {
+      "lora_name": "PLACEHOLDER_STYLE_LORA",
+      "strength_model": 0.0,
+      "strength_clip": 0.0,
+      "model": ["4", 0],
+      "clip": ["4", 1]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Style LoRA (Injectable)"
+    }
+  },
+  "6": {
+    "inputs": {
+      "text": "PLACEHOLDER_PROMPT",
+      "clip": ["5", 1]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "7": {
+    "inputs": {
+      "text": "blurry, low quality, still frame, watermark, text, distorted, ugly, deformed, jpeg artifacts, bad anatomy",
+      "clip": ["5", 1]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative)"
+    }
+  },
+  "8": {
+    "inputs": {
+      "frame_rate": 25.0,
+      "positive": ["6", 0],
+      "negative": ["7", 0]
+    },
+    "class_type": "LTXVConditioning",
+    "_meta": {
+      "title": "LTXV Conditioning"
+    }
+  },
+  "9": {
+    "inputs": {
+      "width": 360,
+      "height": 640,
+      "length": 65,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLTXVLatentVideo",
+    "_meta": {
+      "title": "Empty Latent (Half-Res)"
+    }
+  },
+  "10": {
+    "inputs": {
+      "noise_seed": 0
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "Random Noise"
+    }
+  },
+  "11": {
+    "inputs": {
+      "cfg": 1.0,
+      "model": ["5", 0],
+      "positive": ["8", 0],
+      "negative": ["8", 1]
+    },
+    "class_type": "CFGGuider",
+    "_meta": {
+      "title": "CFG Guider"
+    }
+  },
+  "12": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSampler Select"
+    }
+  },
+  "13": {
+    "inputs": {
+      "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+    },
+    "class_type": "ManualSigmas",
+    "_meta": {
+      "title": "Stage 1 Sigmas (9-step Distilled)"
+    }
+  },
+  "14": {
+    "inputs": {
+      "noise": ["10", 0],
+      "guider": ["11", 0],
+      "sampler": ["12", 0],
+      "sigmas": ["13", 0],
+      "latent_image": ["9", 0]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "Stage 1 Sampling (Low-Res)"
+    }
+  },
+  "15": {
+    "inputs": {
+      "model_name": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
+    },
+    "class_type": "LatentUpscaleModelLoader",
+    "_meta": {
+      "title": "Load Latent Upscaler"
+    }
+  },
+  "16": {
+    "inputs": {
+      "samples": ["14", 0],
+      "upscale_model": ["15", 0],
+      "vae": ["2", 2]
+    },
+    "class_type": "LTXVLatentUpsampler",
+    "_meta": {
+      "title": "Latent Upsample 2x"
+    }
+  },
+  "17": {
+    "inputs": {
+      "sigmas": "0.85, 0.7250, 0.4219, 0.0"
+    },
+    "class_type": "ManualSigmas",
+    "_meta": {
+      "title": "Stage 2 Sigmas (3-step Refine)"
+    }
+  },
+  "18": {
+    "inputs": {
+      "noise": ["10", 0],
+      "guider": ["11", 0],
+      "sampler": ["12", 0],
+      "sigmas": ["17", 0],
+      "latent_image": ["16", 0]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "Stage 2 Sampling (Full-Res Refine)"
+    }
+  },
+  "19": {
+    "inputs": {
+      "tile_size": 512,
+      "overlap": 64,
+      "temporal_size": 4096,
+      "temporal_overlap": 4,
+      "samples": ["18", 0],
+      "vae": ["2", 2]
+    },
+    "class_type": "VAEDecodeTiled",
+    "_meta": {
+      "title": "VAE Decode Tiled"
+    }
+  },
+  "20": {
+    "inputs": {
+      "fps": 25.0,
+      "images": ["19", 0]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "Create Video"
+    }
+  },
+  "21": {
+    "inputs": {
+      "filename_prefix": "ltx_t2v_scene",
+      "format": "auto",
+      "codec": "auto",
+      "video": ["20", 0]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "Save Video"
+    }
+  }
+}
