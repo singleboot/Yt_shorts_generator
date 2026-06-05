@@ -384,6 +384,21 @@ function ProjectDetail() {
     }
   };
 
+  const handleDeleteVideo = async (videoIndex) => {
+    if (!window.confirm(`Delete video #${videoIndex + 1}? This will remove the script, assets, and video file permanently.`)) return;
+    try {
+      const res = await api.delete(`/projects/${id}/videos/${videoIndex}`);
+      if (res.data.status === 'success') {
+        showToast(`Video #${videoIndex + 1} deleted`);
+        loadProject();
+      } else {
+        showToast(res.data.message || 'Delete failed', 'warning');
+      }
+    } catch (e) {
+      showToast('Failed to delete video', 'error');
+    }
+  };
+
   const handleCancelVideos = async () => {
     try {
       await api.post(`/projects/${id}/cancel-all`);
@@ -575,7 +590,7 @@ function ProjectDetail() {
                     No channel (skip uploads)
                   </button>
                   {channels.length === 0 ? (
-                    <div className="px-3 py-2 text-xs text-[#5F6772]">No channels linked. <a href="/settings" className="text-[#C6F11D] underline">Link one</a></div>
+                    <div className="px-3 py-2 text-xs text-[#5F6772]">No channels linked. <button onClick={() => navigate('/settings')} className="text-[#C6F11D] underline hover:text-[#D9FF3D] inline">Link one</button></div>
                   ) : channels.map(ch => (
                     <button
                       key={ch.id}
@@ -1085,6 +1100,7 @@ function ProjectDetail() {
                 project={project}
                 getStepLabel={getStepLabel}
                 onPost={() => handlePost(video.index)}
+                onDelete={() => handleDeleteVideo(video.index)}
                 onEdit={() => setEditingVideo(video)}
                 mode={phase === 'scripts' ? 'script' : 'video'}
                 onRegenScript={phase === 'scripts' ? handleRegenScript : null}

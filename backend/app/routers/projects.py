@@ -160,6 +160,17 @@ def list_project_videos(project_id: int, db: Session = Depends(get_db)):
             merged_vo.update(pending_overrides[idx_str] or {})
         overrides = merged_vo if merged_vo else None
         
+        video_url = None
+        if upload and upload.video_path:
+            from pathlib import Path
+            video_path = Path(upload.video_path)
+            storage = Path(settings.STORAGE_DIR)
+            try:
+                rel = video_path.relative_to(storage)
+                video_url = f"/storage/{rel.as_posix()}"
+            except ValueError:
+                video_url = None
+        
         videos.append({
             "index": i,
             "script": {
@@ -178,6 +189,8 @@ def list_project_videos(project_id: int, db: Session = Depends(get_db)):
                 "title": upload.title,
                 "youtube_video_id": upload.youtube_video_id,
                 "archived_at": upload.archived_at.isoformat() if upload.archived_at else None,
+                "video_url": video_url,
+                "video_path": upload.video_path,
             } if upload else None,
             "job": {
                 "id": job.id,
@@ -191,6 +204,81 @@ def list_project_videos(project_id: int, db: Session = Depends(get_db)):
         })
     
     return {"status": "success", "videos": videos, "video_count": video_count}
+
+@router.delete("/{project_id}/videos/{video_index}", response_model=dict)
+def delete_video(project_id: int, video_index: int, db: Session = Depends(get_db)):
+    """Delete a video (script, assets, upload, files on disk) by index."""
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    script = db.query(models.Script).filter(
+        models.Script.project_id == project_id,
+        models.Script.video_index == video_index
+    ).first()
+
+    if not script:
+        return {"status": "error", "message": f"No script found at index {video_index}"}
+
+    # Delete associated assets on disk then from DB
+    assets = db.query(models.Asset).filter(models.Asset.script_id == script.id).all()
+    for asset in assets:
+        if asset.local_path:
+            try:
+                p = __import__("pathlib").Path(asset.local_path)
+                if p.exists():
+                    p.unlink()
+            except Exception:
+                pass
+        db.delete(asset)
+
+    # Delete upload file on disk then from DB
+    uploads = db.query(models.Upload).filter(models.Upload.script_id == script.id).all()
+    for upload in uploads:
+        if upload.video_path:
+            try:
+                p = __import__("pathlib").Path(upload.video_path)
+                if p.exists():
+                    p.unlink()
+            except Exception:
+                pass
+        db.delete(upload)
+
+    # Delete the script itself (cascade handles remaining relations)
+    # Also clean up any jobs associated with this script's video_index
+    jobs = db.query(models.Job).filter(
+        models.Job.project_id == project_id,
+        models.Job.logs.like(f"Video {video_index + 1}/%")
+    ).all()
+    for job in jobs:
+        db.delete(job)
+
+    if script.video_overrides:
+        ss = project.schedule_settings
+        if isinstance(ss, str):
+            ss = __import__("json").loads(ss) if ss else {}
+        pending = ss.get("pending_overrides", {}) if isinstance(ss, dict) else {}
+        pending.pop(str(video_index), None)
+        if isinstance(ss, dict):
+            ss["pending_overrides"] = pending
+            project.schedule_settings = ss
+
+    db.delete(script)
+    db.commit()
+
+    # Clean up project video folder
+    try:
+        video_dir = __import__("pathlib").Path(project.video_path) if hasattr(project, "video_path") and project.video_path else None
+        if not video_dir:
+            from app.core.config import settings
+            video_dir = __import__("pathlib").Path(settings.STORAGE_DIR) / str(project_id) / str(video_index)
+        if video_dir and video_dir.exists():
+            import shutil
+            shutil.rmtree(str(video_dir), ignore_errors=True)
+    except Exception:
+        pass
+
+    return {"status": "success", "message": f"Video {video_index + 1} deleted"}
 
 @router.post("/{project_id}/videos/{video_index}/post", response_model=dict)
 def post_single_video(project_id: int, video_index: int, db: Session = Depends(get_db)):

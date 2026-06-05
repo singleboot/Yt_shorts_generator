@@ -96,7 +96,10 @@ class YouTubeService:
         if self._httpd is not None:
             return LOCAL_OAUTH_PORT
         if not self._is_port_free(LOCAL_OAUTH_PORT):
-            return LOCAL_OAUTH_PORT
+            raise RuntimeError(
+                f"Port {LOCAL_OAUTH_PORT} is in use by another application. "
+                "Please close the other application or choose a different port."
+            )
 
         service_ref = self
 
@@ -143,7 +146,9 @@ class YouTubeService:
         try:
             self._httpd = HTTPServer(("127.0.0.1", LOCAL_OAUTH_PORT), CallbackHandler)
         except OSError:
-            return LOCAL_OAUTH_PORT
+            raise RuntimeError(
+                f"Port {LOCAL_OAUTH_PORT} is in use. Please free it and try again."
+            )
         self._server_thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
         self._server_thread.start()
         return LOCAL_OAUTH_PORT
@@ -198,7 +203,10 @@ class YouTubeService:
         if not self.client_secrets_file.exists():
             return {"status": "error",
                     "message": "Upload client_secrets.json first (see Setup Instructions)."}
-        port = self._ensure_local_server()
+        try:
+            port = self._ensure_local_server()
+        except RuntimeError as e:
+            return {"status": "error", "message": str(e)}
         flow = InstalledAppFlow.from_client_secrets_file(
             str(self.client_secrets_file), self.SCOPES)
         flow.redirect_uri = f"http://127.0.0.1:{port}/oauth/youtube/callback"

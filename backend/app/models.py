@@ -87,7 +87,7 @@ class Project(Base):
     # Relationships
     scripts = relationship("Script", back_populates="project", cascade="all, delete-orphan")
     jobs = relationship("Job", back_populates="project", cascade="all, delete-orphan")
-    uploads = relationship("Upload", back_populates="project", cascade="all, delete-orphan")
+    uploads = relationship("Upload", back_populates="project")
     youtube_channel = relationship("YouTubeChannel", back_populates="projects")
 
 class Script(Base):
@@ -107,6 +107,7 @@ class Script(Base):
     
     project = relationship("Project", back_populates="scripts")
     uploads = relationship("Upload", back_populates="script", cascade="all, delete-orphan")
+    assets = relationship("Asset", back_populates="script", cascade="all, delete-orphan")
 
 class Asset(Base):
     __tablename__ = "assets"
@@ -121,6 +122,8 @@ class Asset(Base):
     local_path = Column(String, nullable=True)
     meta = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    script = relationship("Script", back_populates="assets")
 
 class Job(Base):
     __tablename__ = "jobs"

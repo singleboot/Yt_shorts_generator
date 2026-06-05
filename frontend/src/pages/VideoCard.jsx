@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Settings, Clock, Loader2, Play, RefreshCw, Archive, Eye, X, Mic, Music, Sparkles } from 'lucide-react';
+import { Send, Settings, Clock, Loader2, Play, RefreshCw, Archive, Eye, X, Mic, Music, Sparkles, Trash2 } from 'lucide-react';
 import { VOICES, MUSIC_GENRES } from '../constants/production';
 
 function formatDateTime(iso) {
@@ -9,7 +9,7 @@ function formatDateTime(iso) {
     + ' · ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
 
-function VideoCard({ video, project, getStepLabel, onPost, onEdit, mode, onRegenScript, onRemovePlaceholder }) {
+function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mode, onRegenScript, onRemovePlaceholder }) {
   const { index, script, upload, job, overrides } = video;
   const isRunning = job?.status === 'running';
   const isComplete = job?.status === 'completed';
@@ -197,14 +197,24 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, mode, onRegen
             </div>
           </div>
         ) : isComplete ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-[#0E1116]">
-            <div className="text-center">
-              <div className="w-16 h-16 mx-auto mb-3 rounded-2xl bg-[rgba(107,255,100,0.08)] border border-[rgba(107,255,100,0.2)] flex items-center justify-center">
-                <Play className="h-8 w-8 text-[#6BFF64] ml-0.5" />
+          upload?.video_url ? (
+            <video
+              src={upload.video_url}
+              controls
+              className="absolute inset-0 w-full h-full object-cover"
+              poster={undefined}
+              preload="metadata"
+            />
+          ) : (
+            <div className="absolute inset-0 flex items-center justify-center bg-[#0E1116]">
+              <div className="text-center">
+                <div className="w-16 h-16 mx-auto mb-3 rounded-2xl bg-[rgba(107,255,100,0.08)] border border-[rgba(107,255,100,0.2)] flex items-center justify-center">
+                  <Play className="h-8 w-8 text-[#6BFF64] ml-0.5" />
+                </div>
+                <p className="text-[11px] text-[#9AA0A6]">Video ready</p>
               </div>
-              <p className="text-[11px] text-[#9AA0A6]">Video ready</p>
             </div>
-          </div>
+          )
         ) : isFailed ? (
           <div className="absolute inset-0 flex items-center justify-center bg-[#0E1116]">
             <div className="text-center">
@@ -272,6 +282,15 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, mode, onRegen
           </p>
         </div>
         <div className="shrink-0 flex items-center gap-1">
+          {onDelete && (
+            <button
+              onClick={onDelete}
+              className="neo-btn-danger p-1.5"
+              title="Delete video"
+            >
+              <Trash2 className="h-3.5 w-3.5 text-[#FF5757]" />
+            </button>
+          )}
           {canPost && (
             <button
               onClick={onPost}

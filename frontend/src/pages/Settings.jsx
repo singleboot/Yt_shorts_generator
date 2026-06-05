@@ -17,6 +17,7 @@ function SettingsPage() {
   const [linkError, setLinkError] = useState('');
   const [pendingChannel, setPendingChannel] = useState(null);
   const [pendingChannelName, setPendingChannelName] = useState('');
+  const [manualAuthUrl, setManualAuthUrl] = useState('');
   const pollRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -103,14 +104,15 @@ function SettingsPage() {
 
   const saveSettings = async () => {
     setSaving(true);
+    setMessage('');
     try {
       await api.put('/settings/', settings);
-      setMessage('Settings saved successfully!');
-      setTimeout(() => setMessage(''), 3000);
+      setMessage('Settings saved!');
     } catch (e) {
-      setMessage('Failed to save settings');
+      setMessage('Save failed: ' + (e.response?.data?.message || e.message));
     } finally {
       setSaving(false);
+      setTimeout(() => setMessage(''), 4000);
     }
   };
 
@@ -141,23 +143,42 @@ function SettingsPage() {
   const linkNewChannel = async () => {
     if (!setupInfo.secrets_file_exists) {
       setShowSetupGuide(true);
+      setTimeout(() => {
+        document.getElementById('secrets-upload-area')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 100);
       return;
     }
     setLinking(true);
     setLinkState('starting');
     setLinkError('');
+    setManualAuthUrl('');
+    let state = '';
     try {
       const startRes = await api.post('/settings/youtube/auth/start-local');
       if (startRes.data.status === 'error') {
         setLinkError(startRes.data.message);
         setLinkState('error');
-        setLinking(false);
+        setMessage('Error: ' + startRes.data.message);
+        setTimeout(() => setMessage(''), 8000);
         return;
       }
-      const { auth_url, state } = startRes.data;
-      window.open(auth_url, '_blank', 'width=600,height=700');
+      const auth_url = startRes.data.auth_url;
+      state = startRes.data.state;
+      const popup = window.open(auth_url, '_blank', 'width=600,height=700');
+      if (!popup || popup.closed) {
+        setManualAuthUrl(auth_url);
+      }
       setLinkState('waiting');
+      const POLL_TIMEOUT = 120000;
+      const startTime = Date.now();
       pollRef.current = setInterval(async () => {
+        if (Date.now() - startTime > POLL_TIMEOUT) {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+          setLinkError('Authorization timed out after 2 minutes. Please try again.');
+          setLinkState('error');
+          return;
+        }
         try {
           const statusRes = await api.get('/settings/youtube/auth/status', { params: { state } });
           const data = statusRes.data;
@@ -180,9 +201,11 @@ function SettingsPage() {
         }
       }, 1500);
     } catch (e) {
-      setLinkError(e.response?.data?.message || e.message);
+      const errMsg = e.response?.data?.message || e.message || 'Connection failed';
+      setLinkError(errMsg);
       setLinkState('error');
-      setLinking(false);
+      setMessage('Error: ' + errMsg);
+      setTimeout(() => setMessage(''), 8000);
     }
   };
 
@@ -194,6 +217,7 @@ function SettingsPage() {
     setLinking(false);
     setLinkState('idle');
     setLinkError('');
+    setManualAuthUrl('');
     setPendingChannel(null);
     setPendingChannelName('');
   };
@@ -368,37 +392,40 @@ function SettingsPage() {
               </li>
             </ol>
 
-            {!setupInfo.secrets_file_exists && (
-              <div
-                className="mt-4 p-6 rounded-2xl border-2 border-dashed border-[#252A33] hover:border-[#C6F11D] transition-colors cursor-pointer"
-                onClick={() => fileInputRef.current?.click()}
-                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  const file = e.dataTransfer.files?.[0];
-                  if (file) handleSecretsFile(file);
-                }}
-              >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".json,application/json"
-                  className="hidden"
-                  onChange={(e) => handleSecretsFile(e.target.files?.[0])}
-                />
-                <div className="flex flex-col items-center gap-2 text-center">
-                  <Upload className="h-8 w-8 text-[#9AA0A6]" />
-                  <p className="text-sm text-[#F5F5F5]">Click or drag your <code className="text-[#C6F11D]">client_secrets.json</code> here</p>
-                  <p className="text-xs text-[#5F6772]">Saved to <code>storage/client_secrets.json</code> on the server</p>
-                </div>
-              </div>
-            )}
           </div>
         )}
 
-        {/* Linking in progress / naming */}
-        {linking && linkState !== 'idle' && (
+        {/* Always-visible upload area when secrets are missing */}
+        {!setupInfo.secrets_file_exists && (
+          <div
+            id="secrets-upload-area"
+            className="mb-4 p-6 rounded-2xl border-2 border-dashed border-[#252A33] hover:border-[#C6F11D] transition-colors cursor-pointer"
+            onClick={() => fileInputRef.current?.click()}
+            onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const file = e.dataTransfer.files?.[0];
+              if (file) handleSecretsFile(file);
+            }}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={(e) => handleSecretsFile(e.target.files?.[0])}
+            />
+            <div className="flex flex-col items-center gap-2 text-center">
+              <Upload className="h-8 w-8 text-[#C6F11D]" />
+              <p className="text-sm text-[#F5F5F5]">Drop your <code className="text-[#C6F11D]">client_secrets.json</code> here or click to browse</p>
+              <p className="text-xs text-[#5F6772]">Saved to <code>storage/client_secrets.json</code> on the server</p>
+            </div>
+          </div>
+        )}
+
+        {/* Linking in progress / naming / error */}
+        {linkState !== 'idle' && (
           <div className="mb-4 p-5 rounded-2xl bg-[#0E1116] border border-[#C6F11D]/30">
             {linkState === 'starting' && (
               <p className="text-sm text-[#9AA0A6]">Starting authorization...</p>
@@ -409,7 +436,23 @@ function SettingsPage() {
                   <div className="h-4 w-4 border-2 border-[#C6F11D] border-t-transparent rounded-full animate-spin" />
                   <p className="text-sm text-[#F5F5F5]">Waiting for Google authorization...</p>
                 </div>
-                <p className="text-xs text-[#9AA0A6] ml-7">A new tab opened. Sign in, grant access, then return here. This page updates automatically.</p>
+                {manualAuthUrl ? (
+                  <div className="ml-7 mt-2 p-3 rounded-xl bg-[rgba(255,183,77,0.08)] border border-[rgba(255,183,77,0.25)]">
+                    <p className="text-xs text-[#FFB74D] font-semibold mb-1">Popup was blocked</p>
+                    <p className="text-xs text-[#9AA0A6] mb-2">Click the link below to open the Google authorization page, then return here after granting access.</p>
+                    <a
+                      href={manualAuthUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-xs text-[#C6F11D] underline font-medium"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      Open Google authorization page
+                    </a>
+                  </div>
+                ) : (
+                  <p className="text-xs text-[#9AA0A6] ml-7">A new tab opened. Sign in, grant access, then return here. This page updates automatically.</p>
+                )}
                 <button onClick={cancelLinking} className="mt-3 ml-7 neo-btn-ghost px-3 py-1 text-xs text-[#FF5757]">Cancel</button>
               </div>
             )}
@@ -756,7 +799,7 @@ function SettingsPage() {
               placeholder="e.g., D:\Archives\AI_Shorts"
               className="w-full px-4 py-2.5 rounded-xl bg-[#0E1116] border border-[#252A33] text-[#F5F5F5] placeholder-[#5F6772] outline-none focus:border-[#C6F11D]/50 transition-all"
             />
-            <p className="text-[11px] text-[#5F6772] mt-1">Subfolders will be created as: {archive_path || '{path}'}/category/DDMMYYYY/</p>
+            <p className="text-[11px] text-[#5F6772] mt-1">Subfolders will be created as: {settings.archive_path || '{path}'}/category/DDMMYYYY/</p>
           </div>
           <div>
             <label className="block text-xs font-semibold text-[#9AA0A6] uppercase tracking-wider mb-2">Auto-archive threshold</label>
@@ -790,7 +833,23 @@ function SettingsPage() {
       </div>
 
       {/* Save */}
-      <div className="flex justify-end">
+      <div className="flex justify-end items-center gap-3 sticky bottom-4 z-10">
+        {message && (
+          <div
+            className={`neo-card px-4 py-2.5 border-l-4 flex items-center gap-2 ${
+              message.toLowerCase().includes('fail') || message.toLowerCase().includes('error')
+                ? 'border-l-[#FF5757]'
+                : 'border-l-[#6BFF64]'
+            }`}
+          >
+            {message.toLowerCase().includes('fail') || message.toLowerCase().includes('error') ? (
+              <XCircle className="h-4 w-4 text-[#FF5757]" />
+            ) : (
+              <CheckCircle className="h-4 w-4 text-[#6BFF64]" />
+            )}
+            <span className="text-sm text-[#F5F5F5]">{message}</span>
+          </div>
+        )}
         <button
           onClick={saveSettings}
           disabled={saving}

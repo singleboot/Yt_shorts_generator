@@ -211,7 +211,7 @@ function ProjectWizard() {
             </label>
             {channels.length === 0 ? (
               <div className="p-3 rounded-xl bg-[rgba(255,200,69,0.08)] border border-[rgba(255,200,69,0.2)] text-[#FFC845] text-xs">
-                No channels linked yet. <a href="/settings" className="underline">Link one in Settings</a> to enable uploads.
+                No channels linked yet. <button onClick={() => navigate('/settings')} className="underline hover:text-white inline">Link one in Settings</button> to enable uploads.
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-2">
