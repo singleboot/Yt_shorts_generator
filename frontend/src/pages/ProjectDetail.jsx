@@ -1071,6 +1071,17 @@ function ProjectDetail() {
           </div>
           <div className="flex items-center gap-2">
             <button
+              onClick={handleGenerateVideos}
+              disabled={generating || videos.filter(v => v.script).length === 0}
+              className="neo-btn-primary flex items-center gap-1.5 px-3 py-1.5 text-[11px] disabled:opacity-30"
+            >
+              {generating ? (
+                <><Loader2 className="h-3 w-3 animate-spin" /> Starting...</>
+              ) : (
+                <><Video className="h-3 w-3" /> Start Generation</>
+              )}
+            </button>
+            <button
               onClick={handleCancelVideos}
               className="neo-btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-[11px] border-[#FF5757] text-[#FF5757] hover:bg-[rgba(255,87,87,0.1)]"
             >
