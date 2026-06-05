@@ -37,6 +37,7 @@ function ProjectDetail() {
   const initialLoadDone = useRef(false);
   const generatingScriptsRef = useRef(false);
   const cancelScriptRef = useRef(null);
+  const prevPhaseRef = useRef('setup');
 
   // Generate form state
   const [sourceType, setSourceType] = useState('topic');
@@ -252,14 +253,18 @@ function ProjectDetail() {
           // Detect phase based on whether any video has a job (t2v started)
           const hasJob = (vidRes.data.videos || []).some(v => v.job);
           const hasScript = (vidRes.data.videos || []).some(v => v.script);
-          if (hasJob) {
-            setPhase('videos');
-            setFormOpen(false); // collapse in videos phase so videos grid is visible
-          } else if (hasScript) {
-            setPhase('scripts');
-          } else {
-            setPhase('setup');
+          let newPhase;
+          if (hasJob) newPhase = 'videos';
+          else if (hasScript) newPhase = 'scripts';
+          else newPhase = 'setup';
+          // Only auto-collapse/expand on PHASE TRANSITION, not on every poll —
+          // otherwise the 2s poll would re-collapse a form the user just opened.
+          if (newPhase !== prevPhaseRef.current) {
+            if (newPhase === 'videos') setFormOpen(false);
+            else if (prevPhaseRef.current === 'videos') setFormOpen(true);
+            prevPhaseRef.current = newPhase;
           }
+          setPhase(newPhase);
         }
       }
     } catch (e) {
