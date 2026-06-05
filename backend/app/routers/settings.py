@@ -128,8 +128,39 @@ def add_youtube_channel(data: dict, db: Session = Depends(get_db)):
 
 @router.post("/youtube/auth/start", response_model=dict)
 def youtube_auth_start():
-    """Start YouTube OAuth flow. Returns auth_url."""
+    """Start YouTube OAuth flow. Returns auth_url (legacy manual-code path)."""
     return youtube_service.start_auth()
+
+
+@router.post("/youtube/auth/start-local", response_model=dict)
+def youtube_auth_start_local():
+    """Start OAuth with a local callback server. No manual code copy/paste needed."""
+    return youtube_service.start_local_auth()
+
+
+@router.get("/youtube/auth/status", response_model=dict)
+def youtube_auth_status(state: str = ""):
+    """Poll for the result of a local OAuth flow. Returns pending|success|error."""
+    return youtube_service.check_auth(state)
+
+
+@router.post("/youtube/upload-secrets")
+async def youtube_upload_secrets(file: UploadFile = File(...)):
+    """Upload client_secrets.json from Google Cloud Console."""
+    content = await file.read()
+    return youtube_service.save_secrets(content)
+
+
+@router.get("/youtube/setup-info", response_model=dict)
+def youtube_setup_info():
+    """Check whether client_secrets.json is in place and return setup hints."""
+    has = youtube_service.has_secrets()
+    return {
+        "secrets_file_exists": has,
+        "secrets_file_path": str(youtube_service.client_secrets_file),
+        "callback_port": 8765,
+        "callback_url": "http://127.0.0.1:8765/oauth/youtube/callback",
+    }
 
 
 @router.post("/youtube/auth/complete", response_model=dict)

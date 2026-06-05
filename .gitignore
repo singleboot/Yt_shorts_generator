@@ -55,6 +55,8 @@ storage/uvicorn.log
 storage/uvicorn.err
 storage/db.sqlite3-shm
 storage/db.sqlite3-wal
+storage/client_secrets.json
+storage/youtube_channels/
 generations.db
 generations.db-*
 backend/storage/

@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Youtube, Link, Key, Server, Save, CheckCircle, XCircle, Cpu, Image, Film, Database, RefreshCw, Plus, Trash2, ExternalLink, RefreshCcw, Archive } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Youtube, Link, Key, Server, Save, CheckCircle, XCircle, Cpu, Image, Film, Database, RefreshCw, Plus, Trash2, ExternalLink, RefreshCcw, Archive, Upload, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, Circle, X } from 'lucide-react';
 import api from '../api/client';
 
 function SettingsPage() {
@@ -11,12 +11,36 @@ function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [linking, setLinking] = useState(false);
+  const [setupInfo, setSetupInfo] = useState({ secrets_file_exists: false });
+  const [showSetupGuide, setShowSetupGuide] = useState(false);
+  const [linkState, setLinkState] = useState('idle');
+  const [linkError, setLinkError] = useState('');
+  const [pendingChannel, setPendingChannel] = useState(null);
+  const [pendingChannelName, setPendingChannelName] = useState('');
+  const pollRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     loadSettings();
     loadChannels();
     checkStatuses();
     loadModelInfo();
+    loadSetupInfo();
+  }, []);
+
+  const loadSetupInfo = async () => {
+    try {
+      const res = await api.get('/settings/youtube/setup-info');
+      setSetupInfo(res.data);
+    } catch (e) {
+      console.error('Failed to load setup info:', e);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, []);
 
   const loadSettings = async () => {
@@ -90,45 +114,105 @@ function SettingsPage() {
     }
   };
 
-  const linkNewChannel = async () => {
-    setLinking(true);
+  const handleSecretsFile = async (file) => {
+    if (!file) return;
+    if (!file.name.endsWith('.json')) {
+      alert('Please upload a .json file (the client_secrets.json from Google Cloud Console).');
+      return;
+    }
+    const formData = new FormData();
+    formData.append('file', file);
     try {
-      const startRes = await api.post('/settings/youtube/auth/start');
-      if (startRes.data.status === 'error') {
-        alert(startRes.data.message);
-        setLinking(false);
-        return;
-      }
-      const authUrl = startRes.data.auth_url;
-      window.open(authUrl, '_blank');
-      const code = prompt(
-        'After authorizing YouTube, paste the auth code from the redirect URL here.\n\n(The "code" parameter from https://localhost/?code=XXXX&scope=...)'
-      );
-      if (!code) {
-        setLinking(false);
-        return;
-      }
-      const channelName = prompt('Name this channel (e.g., "Tech Reviews", "Cooking"):') || '';
-
-      const completeRes = await api.post('/settings/youtube/auth/complete', { code, channel_name: channelName });
-      if (completeRes.data.status !== 'success') {
-        alert(completeRes.data.message);
-        setLinking(false);
-        return;
-      }
-
-      const saveRes = await api.post('/settings/youtube/channels', completeRes.data.channel);
-      if (saveRes.data.status === 'success') {
-        setMessage(`Channel "${saveRes.data.channel.name}" linked successfully!`);
+      const res = await api.post('/settings/youtube/upload-secrets', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      if (res.data.status === 'success') {
+        setMessage('Credentials file uploaded. You can now link a channel.');
         setTimeout(() => setMessage(''), 3000);
-        loadChannels();
+        await loadSetupInfo();
       } else {
-        alert(saveRes.data.message);
+        alert('Upload failed: ' + res.data.message);
       }
     } catch (e) {
-      alert('Link failed: ' + (e.response?.data?.message || e.message));
-    } finally {
+      alert('Upload failed: ' + (e.response?.data?.message || e.message));
+    }
+  };
+
+  const linkNewChannel = async () => {
+    if (!setupInfo.secrets_file_exists) {
+      setShowSetupGuide(true);
+      return;
+    }
+    setLinking(true);
+    setLinkState('starting');
+    setLinkError('');
+    try {
+      const startRes = await api.post('/settings/youtube/auth/start-local');
+      if (startRes.data.status === 'error') {
+        setLinkError(startRes.data.message);
+        setLinkState('error');
+        setLinking(false);
+        return;
+      }
+      const { auth_url, state } = startRes.data;
+      window.open(auth_url, '_blank', 'width=600,height=700');
+      setLinkState('waiting');
+      pollRef.current = setInterval(async () => {
+        try {
+          const statusRes = await api.get('/settings/youtube/auth/status', { params: { state } });
+          const data = statusRes.data;
+          if (data.status === 'pending') return;
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+          if (data.status === 'success') {
+            setPendingChannel(data.channel);
+            setPendingChannelName(data.channel.channel_title || data.channel.name || '');
+            setLinkState('naming');
+          } else {
+            setLinkError(data.message || 'Authorization failed.');
+            setLinkState('error');
+          }
+        } catch (e) {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+          setLinkError('Lost connection while checking status.');
+          setLinkState('error');
+        }
+      }, 1500);
+    } catch (e) {
+      setLinkError(e.response?.data?.message || e.message);
+      setLinkState('error');
       setLinking(false);
+    }
+  };
+
+  const cancelLinking = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    setLinking(false);
+    setLinkState('idle');
+    setLinkError('');
+    setPendingChannel(null);
+    setPendingChannelName('');
+  };
+
+  const savePendingChannel = async () => {
+    if (!pendingChannel) return;
+    const finalName = pendingChannelName.trim() || pendingChannel.channel_title || 'YouTube Channel';
+    try {
+      const res = await api.post('/settings/youtube/channels', { ...pendingChannel, name: finalName });
+      if (res.data.status === 'success') {
+        setMessage(`Channel "${finalName}" linked!`);
+        setTimeout(() => setMessage(''), 3000);
+        loadChannels();
+        cancelLinking();
+      } else {
+        alert(res.data.message);
+      }
+    } catch (e) {
+      alert('Save failed: ' + (e.response?.data?.message || e.message));
     }
   };
 
@@ -193,19 +277,199 @@ function SettingsPage() {
           </div>
           <button
             onClick={linkNewChannel}
-            disabled={linking}
+            disabled={linking && linkState !== 'error'}
             className="neo-btn-primary flex items-center gap-2 px-4 py-2 text-sm"
           >
             <Plus className="h-4 w-4" />
-            {linking ? 'Linking...' : 'Link Channel'}
+            {linking && linkState !== 'error' ? 'Linking...' : 'Link Channel'}
           </button>
         </div>
 
+        {/* Setup Status Banner */}
+        <div className={`flex items-start gap-3 p-4 rounded-2xl mb-4 ${
+          setupInfo.secrets_file_exists
+            ? 'bg-[rgba(107,255,100,0.06)] border border-[rgba(107,255,100,0.25)]'
+            : 'bg-[rgba(255,183,77,0.06)] border border-[rgba(255,183,77,0.25)]'
+        }`}>
+          {setupInfo.secrets_file_exists ? (
+            <CheckCircle2 className="h-5 w-5 text-[#6BFF64] flex-shrink-0 mt-0.5" />
+          ) : (
+            <AlertTriangle className="h-5 w-5 text-[#FFB74D] flex-shrink-0 mt-0.5" />
+          )}
+          <div className="flex-1 min-w-0">
+            {setupInfo.secrets_file_exists ? (
+              <p className="text-sm text-[#F5F5F5]">
+                <span className="font-semibold text-[#6BFF64]">Setup complete.</span> Google credentials loaded. Click "Link Channel" to connect an account.
+              </p>
+            ) : (
+              <>
+                <p className="text-sm text-[#F5F5F5]">
+                  <span className="font-semibold text-[#FFB74D]">One-time setup needed.</span> Upload your Google credentials file to enable channel linking.
+                </p>
+                <p className="text-xs text-[#9AA0A6] mt-1">
+                  This is a one-time 5-minute setup. After that, linking channels takes 1 click.
+                </p>
+              </>
+            )}
+          </div>
+          <button
+            onClick={() => setShowSetupGuide(!showSetupGuide)}
+            className="neo-btn-ghost flex items-center gap-1 px-3 py-1.5 text-xs"
+          >
+            {showSetupGuide ? 'Hide' : 'Show'} instructions
+            {showSetupGuide ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+
+        {/* Setup Guide */}
+        {showSetupGuide && (
+          <div className="mb-4 p-5 rounded-2xl bg-[#0E1116] border border-[#252A33]">
+            <h4 className="text-sm font-semibold text-[#F5F5F5] mb-3 flex items-center gap-2">
+              <Key className="h-4 w-4 text-[#C6F11D]" />
+              How to get your Google credentials (one-time, ~5 min)
+            </h4>
+            <ol className="space-y-3 text-sm text-[#9AA0A6]">
+              <li className="flex gap-3">
+                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-[#C6F11D] text-[#050608] flex items-center justify-center text-xs font-bold">1</span>
+                <div>
+                  <p className="text-[#F5F5F5]">Go to <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="text-[#C6F11D] underline">console.cloud.google.com</a> and create a new project (or pick an existing one).</p>
+                </div>
+              </li>
+              <li className="flex gap-3">
+                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-[#C6F11D] text-[#050608] flex items-center justify-center text-xs font-bold">2</span>
+                <div>
+                  <p className="text-[#F5F5F5]">Open <span className="text-[#C6F11D]">APIs &amp; Services → Library</span>, search for <span className="text-[#C6F11D]">"YouTube Data API v3"</span>, and click <span className="font-semibold">Enable</span>.</p>
+                </div>
+              </li>
+              <li className="flex gap-3">
+                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-[#C6F11D] text-[#050608] flex items-center justify-center text-xs font-bold">3</span>
+                <div>
+                  <p className="text-[#F5F5F5]">Go to <span className="text-[#C6F11D]">APIs &amp; Services → OAuth consent screen</span>.</p>
+                  <p className="text-xs mt-1">• User type: <span className="text-[#C6F11D]">External</span></p>
+                  <p className="text-xs">• App name: anything (e.g. "AI Shorts Creator")</p>
+                  <p className="text-xs">• Scopes: add <code className="text-[#C6F11D]">.../auth/youtube.upload</code> and <code className="text-[#C6F11D]">.../auth/youtube.readonly</code></p>
+                  <p className="text-xs">• Test users: add your YouTube channel's Google account email</p>
+                </div>
+              </li>
+              <li className="flex gap-3">
+                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-[#C6F11D] text-[#050608] flex items-center justify-center text-xs font-bold">4</span>
+                <div>
+                  <p className="text-[#F5F5F5]">Go to <span className="text-[#C6F11D]">APIs &amp; Services → Credentials → Create Credentials → OAuth client ID</span>.</p>
+                  <p className="text-xs mt-1">• Application type: <span className="text-[#C6F11D]">Desktop app</span></p>
+                  <p className="text-xs">• Name: anything (e.g. "AI Shorts Desktop")</p>
+                  <p className="text-xs">• Click Create, then <span className="text-[#C6F11D]">Download JSON</span></p>
+                </div>
+              </li>
+              <li className="flex gap-3">
+                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-[#C6F11D] text-[#050608] flex items-center justify-center text-xs font-bold">5</span>
+                <div>
+                  <p className="text-[#F5F5F5]">Upload the downloaded file below (or drag and drop it).</p>
+                </div>
+              </li>
+            </ol>
+
+            {!setupInfo.secrets_file_exists && (
+              <div
+                className="mt-4 p-6 rounded-2xl border-2 border-dashed border-[#252A33] hover:border-[#C6F11D] transition-colors cursor-pointer"
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const file = e.dataTransfer.files?.[0];
+                  if (file) handleSecretsFile(file);
+                }}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  className="hidden"
+                  onChange={(e) => handleSecretsFile(e.target.files?.[0])}
+                />
+                <div className="flex flex-col items-center gap-2 text-center">
+                  <Upload className="h-8 w-8 text-[#9AA0A6]" />
+                  <p className="text-sm text-[#F5F5F5]">Click or drag your <code className="text-[#C6F11D]">client_secrets.json</code> here</p>
+                  <p className="text-xs text-[#5F6772]">Saved to <code>storage/client_secrets.json</code> on the server</p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Linking in progress / naming */}
+        {linking && linkState !== 'idle' && (
+          <div className="mb-4 p-5 rounded-2xl bg-[#0E1116] border border-[#C6F11D]/30">
+            {linkState === 'starting' && (
+              <p className="text-sm text-[#9AA0A6]">Starting authorization...</p>
+            )}
+            {linkState === 'waiting' && (
+              <div>
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="h-4 w-4 border-2 border-[#C6F11D] border-t-transparent rounded-full animate-spin" />
+                  <p className="text-sm text-[#F5F5F5]">Waiting for Google authorization...</p>
+                </div>
+                <p className="text-xs text-[#9AA0A6] ml-7">A new tab opened. Sign in, grant access, then return here. This page updates automatically.</p>
+                <button onClick={cancelLinking} className="mt-3 ml-7 neo-btn-ghost px-3 py-1 text-xs text-[#FF5757]">Cancel</button>
+              </div>
+            )}
+            {linkState === 'naming' && pendingChannel && (
+              <div>
+                <div className="flex items-center gap-3 mb-4">
+                  {pendingChannel.thumbnail_url ? (
+                    <img src={pendingChannel.thumbnail_url} alt={pendingChannel.channel_title} className="w-12 h-12 rounded-full" />
+                  ) : (
+                    <div className="w-12 h-12 rounded-full bg-[rgba(255,87,87,0.12)] flex items-center justify-center">
+                      <Youtube className="h-6 w-6 text-[#FF5757]" />
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-[#6BFF64]">Connected to YouTube!</p>
+                    <p className="text-xs text-[#9AA0A6] truncate">{pendingChannel.channel_title}</p>
+                  </div>
+                </div>
+                <label className="block text-xs font-semibold text-[#9AA0A6] uppercase tracking-wider mb-2">Display name in this app</label>
+                <input
+                  type="text"
+                  value={pendingChannelName}
+                  onChange={(e) => setPendingChannelName(e.target.value)}
+                  placeholder="e.g., Tech Reviews, Cooking, Main Channel"
+                  className="w-full px-4 py-2.5 rounded-xl bg-[#050608] border border-[#252A33] text-[#F5F5F5] placeholder-[#5F6772] outline-none focus:border-[#C6F11D]/50 text-sm"
+                  autoFocus
+                />
+                <p className="text-[11px] text-[#5F6772] mt-1">You can rename it later by unlinking and re-adding.</p>
+                <div className="flex gap-2 mt-4">
+                  <button onClick={savePendingChannel} className="neo-btn-primary px-4 py-2 text-sm">Save Channel</button>
+                  <button onClick={cancelLinking} className="neo-btn-ghost px-4 py-2 text-sm">Cancel</button>
+                </div>
+              </div>
+            )}
+            {linkState === 'error' && (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <XCircle className="h-4 w-4 text-[#FF5757]" />
+                  <p className="text-sm font-semibold text-[#FF5757]">Linking failed</p>
+                </div>
+                <p className="text-xs text-[#9AA0A6] ml-6">{linkError}</p>
+                <div className="flex gap-2 mt-3 ml-6">
+                  <button onClick={linkNewChannel} className="neo-btn-secondary px-3 py-1 text-xs">Try again</button>
+                  <button onClick={cancelLinking} className="neo-btn-ghost px-3 py-1 text-xs">Dismiss</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Linked channels list */}
         {channels.length === 0 ? (
           <div className="p-8 text-center border border-dashed border-[#252A33] rounded-2xl">
             <Youtube className="h-10 w-10 text-[#5F6772] mx-auto mb-3" />
             <p className="text-sm text-[#9AA0A6]">No channels linked yet</p>
-            <p className="text-xs text-[#5F6772] mt-1">Click "Link Channel" to connect your first YouTube account</p>
+            <p className="text-xs text-[#5F6772] mt-1">
+              {setupInfo.secrets_file_exists
+                ? 'Click "Link Channel" above to connect your first YouTube account'
+                : 'Upload your Google credentials first, then link a channel'}
+            </p>
           </div>
         ) : (
           <div className="space-y-2">
