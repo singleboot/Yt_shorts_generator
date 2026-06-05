@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Settings, Clock, Loader2, Play, RefreshCw, Archive, Eye, X, Mic, Music, Sparkles, Trash2 } from 'lucide-react';
+import { Send, Settings, Clock, Loader2, Play, RefreshCw, Archive, Eye, X, Mic, Music, Sparkles, Trash2, Ban, StopCircle } from 'lucide-react';
+import api from '../api/client';
 import { VOICES, MUSIC_GENRES } from '../constants/production';
 
 function formatDateTime(iso) {
@@ -10,6 +11,24 @@ function formatDateTime(iso) {
 }
 
 function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mode, onRegenScript, onRemovePlaceholder }) {
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState('');
+
+  const handleCancel = async () => {
+    if (!job?.id) return;
+    if (!window.confirm(`Cancel video ${serial}?\n\nThis stops the running ComfyUI generation. Partial work will be lost.`)) return;
+    setCancelling(true);
+    setCancelError('');
+    try {
+      await api.post(`/jobs/${job.id}/cancel`);
+      // The video card will re-render with status='cancelled' on next poll
+    } catch (e) {
+      setCancelError(e.response?.data?.detail || e.message || 'Cancel failed');
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   const { index, script, upload, job, overrides } = video;
   const isRunning = job?.status === 'running';
   const isComplete = job?.status === 'completed';
@@ -27,16 +46,29 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
   // Elapsed timer
   const [elapsed, setElapsed] = useState(0);
   const startRef = useRef(null);
+  // Smoothed velocity (percent per second) for stable ETA
+  const velocityRef = useRef(null);          // EMA-smoothed %/s
+  const lastProgressRef = useRef(0);
+  const lastProgressAtRef = useRef(null);
+  const lastEtaRef = useRef(null);            // last computed ETA (for monotonic display)
 
   useEffect(() => {
     if (isRunning) {
       if (!startRef.current) startRef.current = Date.now();
+      if (lastProgressAtRef.current === null) lastProgressAtRef.current = Date.now();
       const interval = setInterval(() => {
-        if (startRef.current) setElapsed(Math.floor((Date.now() - startRef.current) / 1000));
+        if (startRef.current) {
+          const nowElapsed = Math.floor((Date.now() - startRef.current) / 1000);
+          setElapsed(nowElapsed);
+        }
       }, 1000);
       return () => clearInterval(interval);
     } else if (isComplete || isFailed) {
       startRef.current = null;
+      velocityRef.current = null;
+      lastProgressRef.current = 0;
+      lastProgressAtRef.current = null;
+      lastEtaRef.current = null;
       setElapsed(0);
     }
   }, [isRunning, isComplete, isFailed]);
@@ -47,13 +79,81 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
-  const eta = progress > 5 && elapsed > 0 ? Math.floor(elapsed * (100 / progress - 1)) : 0;
+  // --- ETA: smooth, monotonically decreasing -------------------------
+  // Backend progress updates are coarse (5, 15, 30, 55, 70, 80, 100)
+  // so a naive (elapsed * 100/progress) makes ETA jump UP between
+  // backend updates as elapsed grows. Solution: track velocity only
+  // at the moments progress actually changes, EMA-smooth it, and
+  // only ever DECREASE the displayed ETA unless a faster stage
+  // actually completed.
+  const computeEta = (prog, el) => {
+    if (!isRunning) return 0;
+    if (prog >= 100) return 0;
+    if (el <= 0) return 0;
+
+    const now = Date.now();
+    const lastProg = lastProgressRef.current;
+    const lastAt = lastProgressAtRef.current;
+
+    // If progress moved, update velocity (instantaneous)
+    if (prog !== lastProg && lastAt !== null && now > lastAt) {
+      const dt = (now - lastAt) / 1000;
+      const dp = prog - lastProg;
+      if (dt > 0 && dp >= 0) {
+        const inst = dp / dt; // %/s
+        if (velocityRef.current === null) {
+          velocityRef.current = inst;
+        } else {
+          // EMA: 0.4 weight to new sample (responsive but stable)
+          velocityRef.current = 0.4 * inst + 0.6 * velocityRef.current;
+        }
+      }
+      lastProgressRef.current = prog;
+      lastProgressAtRef.current = now;
+    }
+
+    const v = velocityRef.current;
+    if (!v || v <= 0.001) {
+      // No velocity yet (just started) — fall back to a conservative estimate
+      // Assume the whole job takes ~2 minutes based on typical LTX runs
+      return Math.max(0, 120 - el);
+    }
+
+    const remaining = (100 - prog) / v;
+    // Clamp to a sane range so a tiny velocity doesn't blow ETA up
+    return Math.max(0, Math.min(remaining, 1800));
+  };
+
+  const rawEta = computeEta(progress, elapsed);
+
+  // Monotonic-decreasing display: never let the shown ETA go up
+  // (unless a clearly-faster stage just started)
+  let displayEta = rawEta;
+  if (lastEtaRef.current !== null) {
+    const drift = lastEtaRef.current - rawEta;
+    if (drift < -3) {
+      // New ETA is more than 3s higher than the last one — a slow stage
+      // finished and the new sample is artificially high. Hold the old ETA.
+      displayEta = lastEtaRef.current;
+    } else {
+      displayEta = rawEta;
+    }
+  }
+  // Decay displayed ETA slowly while we wait for the next progress update,
+  // so the displayed number keeps trending down even between backend ticks.
+  if (displayEta > 0 && rawEta > 0 && lastEtaRef.current !== null) {
+    const decay = Math.max(0, lastEtaRef.current - 1); // -1s per tick
+    displayEta = Math.min(displayEta, decay);
+  }
+  lastEtaRef.current = displayEta;
+
+  const eta = Math.floor(displayEta);
 
   // SCRIPT MODE preview
   if (mode === 'script') {
     if (video.generating) {
       return (
-        <div className="neo-card overflow-hidden flex flex-col aspect-[5/8] transition-all duration-150 origin-center scale-[0.7] relative">
+        <div className="neo-card overflow-hidden flex flex-col aspect-[5/8] transition-all duration-150 relative">
           <div className="neo-titlebar-queued flex items-center justify-between">
             <span className="flex items-center gap-1.5">
               <span className="neo-dot neo-dot-clip animate-pulse" />
@@ -171,8 +271,24 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
         <div className="flex items-center gap-2">
           <span className="text-[10px] opacity-70 font-mono">#{serial}</span>
           {isRunning && <span className="text-[10px] opacity-70">{formatTime(elapsed)}</span>}
+          {isRunning && job?.id && (
+            <button
+              onClick={handleCancel}
+              disabled={cancelling}
+              className="ml-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[rgba(255,87,87,0.18)] text-[#FF5757] border border-[rgba(255,87,87,0.35)] hover:bg-[rgba(255,87,87,0.3)] disabled:opacity-50 transition-colors"
+              title="Cancel generation (stops ComfyUI)"
+            >
+              <StopCircle className="h-3 w-3" />
+              {cancelling ? 'Stopping…' : 'Cancel'}
+            </button>
+          )}
         </div>
       </div>
+      {cancelError && (
+        <div className="px-3 py-1.5 text-[10px] text-[#FF5757] bg-[rgba(255,87,87,0.08)] border-b border-[rgba(255,87,87,0.2)]">
+          {cancelError}
+        </div>
+      )}
 
       {/* Preview area */}
       <div className="relative aspect-[5/8] bg-[#050608] overflow-hidden">

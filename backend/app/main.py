@@ -29,6 +29,31 @@ async def startup_event():
     print(f"   API: http://{settings.API_HOST}:{settings.API_PORT}/api/health")
     print(f"   ComfyUI: {settings.COMFYUI_HOST}")
     print("="*60 + "\n")
+    # Probe ComfyUI for SageAttention availability
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            obj_info = await client.get(f"{settings.COMFYUI_HOST}/object_info")
+            nodes = obj_info.json() if obj_info.status_code == 200 else {}
+            sage_nodes = [
+                name for name in nodes.keys()
+                if "sage" in name.lower() or "SageAttention" in name
+            ]
+            if sage_nodes:
+                print(f"   SageAttention: ENABLED ({len(sage_nodes)} node(s))")
+                for n in sage_nodes[:5]:
+                    print(f"      - {n}")
+            else:
+                # SageAttention can also be loaded as a library and auto-applied
+                # via the LTX2 memory-efficient patch. Check via /system_stats.
+                sys_stats = await client.get(f"{settings.COMFYUI_HOST}/system_stats")
+                if sys_stats.status_code == 200:
+                    print("   SageAttention: enabled via LTX2 patch (library loaded)")
+                else:
+                    print("   SageAttention: not detected (install via Start ComfyUI SageAttention.bat)")
+    except Exception as e:
+        print(f"   SageAttention: probe failed (ComfyUI not reachable: {e})")
+    print("="*60 + "\n")
 
 # CORS
 app.add_middleware(

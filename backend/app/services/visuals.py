@@ -102,6 +102,19 @@ class ComfyUIClient:
             print(f"clear_vram failed (non-fatal): {e}")
             return False
 
+    async def interrupt(self) -> bool:
+        """Interrupt the currently running ComfyUI prompt.
+        ComfyUI returns {'status': 'ok'} on success. Returns True if the
+        interrupt was accepted (whether or not a prompt was actually running).
+        """
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(f"{self.host}/interrupt")
+                return resp.status_code == 200
+        except Exception as e:
+            print(f"ComfyUI interrupt failed: {e}")
+            return False
+
 
 class VisualsService:
     def __init__(self):
@@ -362,7 +375,8 @@ class VisualsService:
     async def generate_scene_videos(self, scenes: List[Dict], project_dir: Path,
                                       lora_name: str = None, lora_strength: float = 0.6,
                                       project_id: int = 0, video_index: int = 0,
-                                      on_progress: callable = None) -> List[Path]:
+                                      on_progress: callable = None,
+                                      is_cancelled: callable = None) -> List[Path]:
         """Generate one t2v clip per scene, sequentially, with VRAM clearing between scenes.
 
         Args:
@@ -373,14 +387,27 @@ class VisualsService:
             project_id: For deterministic seed
             video_index: For deterministic seed
             on_progress: Callback(scene_index, total_scenes, message) for progress updates
+            is_cancelled: Optional callable returning True if the job was cancelled.
+                          When set, the loop bails out between scenes so partial
+                          generation is returned and ComfyUI is interrupted.
 
         Returns:
-            List of Paths to scene_NN.mp4 files
+            List of Paths to scene_NN.mp4 files (may be shorter than len(scenes) on cancel)
         """
         project_dir.mkdir(parents=True, exist_ok=True)
         paths = []
 
         for i, scene in enumerate(scenes):
+            # Cancellation check between scenes
+            if is_cancelled and is_cancelled():
+                print(f"Scene generation cancelled before scene {i+1}")
+                # Make sure ComfyUI is interrupted so any in-flight prompt stops
+                try:
+                    await self.comfyui.interrupt()
+                except Exception:
+                    pass
+                break
+
             duration = scene.get("duration_seconds", 8)
             # Convert duration to frames at 25fps, clamp to LTX max of ~250 frames
             video_length = min(int(duration * 25) + 1, 250)
@@ -409,6 +436,19 @@ class VisualsService:
                 height=1280,
                 video_length=video_length,
             )
+
+            # Cancellation check after each scene finishes (which can take minutes)
+            if is_cancelled and is_cancelled():
+                # Persist whatever we have so far
+                if mp4_bytes:
+                    scene_path = project_dir / f"scene_{i+1:02d}.mp4"
+                    scene_path.write_bytes(mp4_bytes)
+                    paths.append(scene_path)
+                try:
+                    await self.comfyui.interrupt()
+                except Exception:
+                    pass
+                break
 
             if mp4_bytes is None:
                 print(f"Failed to generate scene {i+1}, using fallback black clip")

@@ -49,6 +49,33 @@ def cancel_job(job_id: int, db: Session = Depends(get_db)):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     if job.status in ["queued", "running"]:
+        # 1. Mark cancelled in the running scheduler pipeline (so the loop bails)
+        try:
+            scheduler_service.mark_cancelled(job_id)
+        except Exception as e:
+            print(f"mark_cancelled failed: {e}")
+        # 2. Interrupt ComfyUI directly as a belt-and-braces measure
+        try:
+            import asyncio as aio
+            try:
+                loop = aio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        pool.submit(aio.run, scheduler_service_comfyui_interrupt()).result(timeout=10)
+                else:
+                    loop.run_until_complete(scheduler_service_comfyui_interrupt())
+            except RuntimeError:
+                aio.run(scheduler_service_comfyui_interrupt())
+        except Exception as e:
+            print(f"ComfyUI interrupt on cancel failed: {e}")
+        # 3. Update DB status
         job.status = "cancelled"
+        job.logs = (job.logs or "") + "\nCancelled by user"
         db.commit()
     return {"status": "cancelled", "job_id": job_id}
+
+async def scheduler_service_comfyui_interrupt():
+    """Helper to interrupt ComfyUI from the cancel route."""
+    from app.services.visuals import visuals_service
+    return await visuals_service.comfyui.interrupt()

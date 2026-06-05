@@ -20,7 +20,34 @@ class SchedulerService:
         self.scheduler = BackgroundScheduler()
         self.scheduler.start()
         self._register_default_jobs()
-    
+        # Active job tracker for cancellation. Maps job_id -> True when cancelled.
+        # Polled by long-running pipeline stages so they bail out promptly.
+        self._cancelled: set = set()
+        # Tracks which job is currently driving the ComfyUI client, so the
+        # /jobs/{id}/cancel route can interrupt ComfyUI.
+        self._active_job_id: int = None
+
+    def is_cancelled(self, job_id: int) -> bool:
+        return job_id in self._cancelled
+
+    def mark_cancelled(self, job_id: int):
+        self._cancelled.add(job_id)
+        # Best-effort interrupt of any running ComfyUI workflow
+        try:
+            import asyncio as aio
+            try:
+                loop = aio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        pool.submit(aio.run, visuals_service.comfyui.interrupt()).result(timeout=10)
+                else:
+                    loop.run_until_complete(visuals_service.comfyui.interrupt())
+            except RuntimeError:
+                aio.run(visuals_service.comfyui.interrupt())
+        except Exception as e:
+            print(f"mark_cancelled: ComfyUI interrupt failed (non-fatal): {e}")
+
     def _register_default_jobs(self):
         """Register the daily research job."""
         # Daily research at midnight
@@ -150,6 +177,38 @@ class SchedulerService:
     def _run_single_video_job(self, db, job):
         """Generate a single video for a project."""
         import json
+        # Register as the active ComfyUI job for cancellation
+        self._active_job_id = job.id
+        try:
+            self._run_single_video_job_inner(db, job)
+        finally:
+            self._active_job_id = None
+
+    def _run_single_video_job_inner(self, db, job):
+        import json
+        def check_cancel():
+            """Returns True if the job was cancelled via /jobs/{id}/cancel.
+            Also interrupts the running ComfyUI prompt so generation halts
+            within a few seconds."""
+            if self.is_cancelled(job.id):
+                # Make doubly sure ComfyUI is interrupted
+                try:
+                    import asyncio as aio
+                    try:
+                        loop = aio.get_event_loop()
+                        if loop.is_running():
+                            import concurrent.futures
+                            with concurrent.futures.ThreadPoolExecutor() as pool:
+                                pool.submit(aio.run, visuals_service.comfyui.interrupt()).result(timeout=5)
+                        else:
+                            loop.run_until_complete(visuals_service.comfyui.interrupt())
+                    except RuntimeError:
+                        aio.run(visuals_service.comfyui.interrupt())
+                except Exception:
+                    pass
+                return True
+            return False
+
         import asyncio as aio
         
         def run_async(coro):
@@ -250,6 +309,13 @@ class SchedulerService:
         project_dir = settings.PROJECTS_DIR / str(project.id) / str(script.id)
         project_dir.mkdir(parents=True, exist_ok=True)
 
+        # Cancellation check right before the long ComfyUI run
+        if check_cancel():
+            job.logs = f"Video {video_num}/{video_count} - Cancelled by user"
+            job.status = "cancelled"
+            db.commit()
+            return
+
         # Resolve LoRA from style
         lora_name = visuals_service._resolve_lora(
             visual_settings.get("custom_lora", "") or
@@ -278,6 +344,7 @@ class SchedulerService:
             project_id=project.id,
             video_index=video_num - 1,
             on_progress=scene_progress,
+            is_cancelled=check_cancel,
         ))
 
         # Save scene clips as visual assets
