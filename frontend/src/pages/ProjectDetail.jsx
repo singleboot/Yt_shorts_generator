@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Sparkles, Send, CheckCircle, AlertCircle, Loader2, Youtube, ChevronDown, ChevronUp, Hash, Play, Globe, Clock, Archive, FileText, Video, ChevronLeft, ChevronRight, Palette, Mic, Music, Volume2, Square } from 'lucide-react';
+import { ArrowLeft, Sparkles, Send, CheckCircle, AlertCircle, Loader2, Youtube, ChevronDown, ChevronUp, Hash, Play, Globe, Clock, Archive, FileText, Video, ChevronLeft, ChevronRight, Palette, Mic, Music, Volume2, Square, Captions, Type } from 'lucide-react';
 import api from '../api/client';
 import axios from 'axios';
 import VideoCard from './VideoCard';
@@ -42,6 +42,14 @@ function ProjectDetail() {
   const [sourceType, setSourceType] = useState('topic');
   const [category, setCategory] = useState('');
   const [topic, setTopic] = useState('');
+  // Caption settings
+  const [captionStyle, setCaptionStyle] = useState('standard');
+  const [captionFont, setCaptionFont] = useState('Arial-Bold');
+  const [captionFontSize, setCaptionFontSize] = useState(48);
+  const [captionColor, setCaptionColor] = useState('#FFFFFF');
+  const [captionStrokeColor, setCaptionStrokeColor] = useState('#000000');
+  const [captionStrokeWidth, setCaptionStrokeWidth] = useState(3);
+  const [captionAnimation, setCaptionAnimation] = useState('word_by_word');
   const [url, setUrl] = useState('');
   const [genCount, setGenCount] = useState(4);
   const [duration, setDuration] = useState(45);
@@ -138,7 +146,8 @@ function ProjectDetail() {
           const newVS = { ...(project?.visual_settings || {}), ai_style: selectedStyle, lora_strength: loraStrength };
           const newASRaw = { ...(project?.audio_settings || {}), voice_id: selectedVoice, voice_custom: voiceCustom || undefined, music_genre: selectedMusic, music_custom: musicCustom || undefined };
           const newAS = Object.fromEntries(Object.entries(newASRaw).filter(([, v]) => v !== undefined));
-          await api.put(`/projects/${id}`, { visual_settings: newVS, audio_settings: newAS });
+          const newCS = { style: captionStyle, font: captionFont, font_size: captionFontSize, color: captionColor, stroke_color: captionStrokeColor, stroke_width: captionStrokeWidth, animation: captionAnimation };
+          await api.put(`/projects/${id}`, { visual_settings: newVS, audio_settings: newAS, caption_settings: newCS });
         } catch (e) {
           console.error('Auto-save failed', e);
         } finally {
@@ -151,7 +160,7 @@ function ProjectDetail() {
   useEffect(() => {
     if (!project) return;
     autoSaveProductionSettings();
-  }, [selectedStyle, loraStrength, selectedVoice, selectedMusic, voiceCustom, musicCustom]);
+  }, [selectedStyle, loraStrength, selectedVoice, selectedMusic, voiceCustom, musicCustom, captionStyle, captionFont, captionFontSize, captionColor, captionStrokeColor, captionStrokeWidth, captionAnimation]);
 
   const fetchSuggestions = async (cat) => {
     if (!cat) { setSuggestedTopics([]); return; }
@@ -225,6 +234,14 @@ function ProjectDetail() {
             setSelectedMusic(as.music_genre || 'ambient');
             setVoiceCustom(as.voice_custom || '');
             setMusicCustom(as.music_custom || '');
+            const cs = projRes.data.caption_settings || {};
+            setCaptionStyle(cs.style || 'standard');
+            setCaptionFont(cs.font || 'Arial-Bold');
+            setCaptionFontSize(cs.font_size || 48);
+            setCaptionColor(cs.color || '#FFFFFF');
+            setCaptionStrokeColor(cs.stroke_color || '#000000');
+            setCaptionStrokeWidth(cs.stroke_width ?? 3);
+            setCaptionAnimation(cs.animation || 'word_by_word');
           }
       }
       if (vidRes && vidRes.data) {
@@ -237,6 +254,7 @@ function ProjectDetail() {
           const hasScript = (vidRes.data.videos || []).some(v => v.script);
           if (hasJob) {
             setPhase('videos');
+            setFormOpen(false); // collapse in videos phase so videos grid is visible
           } else if (hasScript) {
             setPhase('scripts');
           } else {
@@ -673,14 +691,20 @@ function ProjectDetail() {
         </div>
       </div>
 
-      {/* Generate Form — only show in setup or scripts phase */}
-      {phase !== 'videos' && (
+      {/* Generate Form — always visible, auto-collapsed in videos phase */}
+      {(phase === 'setup' || phase === 'scripts' || phase === 'videos') && (
         <div className="neo-card mb-6 overflow-hidden">
           <button
             onClick={() => setFormOpen(o => !o)}
             className="w-full flex items-center justify-between px-5 py-3 hover:bg-[rgba(255,255,255,0.02)] transition-colors"
           >
-            <span className="text-sm font-bold text-[#F5F5F5]">Generate Videos</span>
+            <span className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-[#C6F11D]" />
+              <span className="text-sm font-bold text-[#F5F5F5]">Generate Videos</span>
+              {phase === 'videos' && (
+                <span className="text-[10px] text-[#5F6772] font-normal">(settings for next batch)</span>
+              )}
+            </span>
             {formOpen ? <ChevronUp className="h-4 w-4 text-[#9AA0A6]" /> : <ChevronDown className="h-4 w-4 text-[#9AA0A6]" />}
           </button>
           {formOpen && (
@@ -924,6 +948,15 @@ function ProjectDetail() {
                     <Music className="h-3.5 w-3.5" />
                     Music {MUSIC_GENRES.find(m => m.id === selectedMusic)?.name || selectedMusic}
                   </button>
+                  <button
+                    onClick={() => setProductionTab(productionTab === 'caption' ? null : 'caption')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all duration-150 ${
+                      productionTab === 'caption' ? 'bg-[#C6F11D] text-[#050608]' : 'bg-[#0E1116] text-[#9AA0A6] border border-[#252A33] hover:border-[#C6F11D]'
+                    }`}
+                  >
+                    <Captions className="h-3.5 w-3.5" />
+                    Captions {captionStyle !== 'standard' ? `(${captionStyle})` : ''}
+                  </button>
                 </div>
 
                 {productionTab === 'style' && (
@@ -1053,6 +1086,129 @@ function ProjectDetail() {
                         className="w-full mt-2 p-2.5 rounded-xl bg-[#0E1116] border border-[#252A33] text-xs text-[#F5F5F5] outline-none focus:border-[#C6F11D]/50 resize-none"
                       />
                     )}
+                  </div>
+                )}
+
+                {productionTab === 'caption' && (
+                  <div className="mb-4 space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] text-[#9AA0A6] block mb-1">Style</label>
+                        <div className="flex gap-1.5 flex-wrap">
+                          {[
+                            { id: 'standard', name: 'Standard' },
+                            { id: 'bold', name: 'Bold' },
+                            { id: 'minimal', name: 'Minimal' },
+                            { id: 'boxed', name: 'Boxed' },
+                            { id: 'karaoke', name: 'Karaoke' },
+                          ].map(s => (
+                            <button
+                              key={s.id}
+                              onClick={() => setCaptionStyle(s.id)}
+                              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-medium border transition-all duration-150 ${
+                                captionStyle === s.id
+                                  ? 'bg-[rgba(198,241,29,0.12)] text-[#C6F11D] border-[rgba(198,241,29,0.3)]'
+                                  : 'border-[#252A33] bg-[#0E1116] text-[#9AA0A6] hover:border-[#C6F11D]'
+                              }`}
+                            >
+                              {s.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-[#9AA0A6] block mb-1">Animation</label>
+                        <div className="flex gap-1.5 flex-wrap">
+                          {[
+                            { id: 'none', name: 'None' },
+                            { id: 'word_by_word', name: 'Word' },
+                            { id: 'fade', name: 'Fade' },
+                            { id: 'pop', name: 'Pop' },
+                            { id: 'typewriter', name: 'Type' },
+                          ].map(a => (
+                            <button
+                              key={a.id}
+                              onClick={() => setCaptionAnimation(a.id)}
+                              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-medium border transition-all duration-150 ${
+                                captionAnimation === a.id
+                                  ? 'bg-[rgba(198,241,29,0.12)] text-[#C6F11D] border-[rgba(198,241,29,0.3)]'
+                                  : 'border-[#252A33] bg-[#0E1116] text-[#9AA0A6] hover:border-[#C6F11D]'
+                              }`}
+                            >
+                              {a.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] text-[#9AA0A6] block mb-1">Font</label>
+                        <select
+                          value={captionFont}
+                          onChange={e => setCaptionFont(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl bg-[#0E1116] border border-[#252A33] text-xs text-[#F5F5F5] outline-none focus:border-[#C6F11D]/50"
+                        >
+                          {['Arial-Bold','Arial','Impact','Helvetica-Bold','Verdana-Bold','Trebuchet-MS','Comic-Sans-MS','Courier-New-Bold','Times-New-Roman-Bold','Georgia-Bold'].map(f => (
+                            <option key={f} value={f} className="bg-[#0E1116] text-[#F5F5F5]">{f}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-[#9AA0A6] block mb-1">Size: {captionFontSize}px</label>
+                        <input
+                          type="range" min="24" max="96" step="2"
+                          value={captionFontSize}
+                          onChange={(e) => setCaptionFontSize(parseInt(e.target.value))}
+                          className="w-full accent-[#C6F11D]"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] text-[#9AA0A6] block mb-1">Text Color</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="color"
+                            value={captionColor}
+                            onChange={(e) => setCaptionColor(e.target.value)}
+                            className="w-10 h-9 rounded-lg bg-[#0E1116] border border-[#252A33] cursor-pointer"
+                          />
+                          <input
+                            type="text"
+                            value={captionColor}
+                            onChange={(e) => setCaptionColor(e.target.value)}
+                            className="flex-1 px-2 py-1.5 rounded-lg bg-[#0E1116] border border-[#252A33] text-xs text-[#F5F5F5] outline-none focus:border-[#C6F11D]/50 font-mono"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-[#9AA0A6] block mb-1">Stroke Color</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="color"
+                            value={captionStrokeColor}
+                            onChange={(e) => setCaptionStrokeColor(e.target.value)}
+                            className="w-10 h-9 rounded-lg bg-[#0E1116] border border-[#252A33] cursor-pointer"
+                          />
+                          <input
+                            type="text"
+                            value={captionStrokeColor}
+                            onChange={(e) => setCaptionStrokeColor(e.target.value)}
+                            className="flex-1 px-2 py-1.5 rounded-lg bg-[#0E1116] border border-[#252A33] text-xs text-[#F5F5F5] outline-none focus:border-[#C6F11D]/50 font-mono"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-[#9AA0A6] block mb-1">Stroke Width: {captionStrokeWidth}px</label>
+                      <input
+                        type="range" min="0" max="8" step="1"
+                        value={captionStrokeWidth}
+                        onChange={(e) => setCaptionStrokeWidth(parseInt(e.target.value))}
+                        className="w-full accent-[#C6F11D]"
+                      />
+                    </div>
                   </div>
                 )}
               </div>
