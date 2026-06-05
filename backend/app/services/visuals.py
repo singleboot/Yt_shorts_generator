@@ -306,13 +306,16 @@ class VisualsService:
             print("ComfyUI not connected")
             return None
 
+        # Clamp lora_strength to UI's slider range [0.0, 1.5]
+        lora_strength = max(0.0, min(1.5, float(lora_strength)))
+
         # Load t2v workflow
         workflow = self._load_workflow("video_t2v_ltx.json")
 
         # Resolve style LoRA: lora_name can be a style key, filename, or full path
         style_lora_path = self._resolve_lora(lora_name) if lora_name else None
         if lora_name and not style_lora_path:
-            print(f"Style LoRA not found: {lora_name}, using base model (no style)")
+            print(f"Style LoRA not found: {lora_name}, using base model (no style)", flush=True)
 
         # Stage 1 runs at half resolution, stage 2 upscales 2x
         half_w = max(64, (width // 2) // 32 * 32)
@@ -326,11 +329,16 @@ class VisualsService:
             workflow["5"]["inputs"]["lora_name"] = style_lora_path
             workflow["5"]["inputs"]["strength_model"] = lora_strength
             workflow["5"]["inputs"]["strength_clip"] = round(lora_strength * 0.75, 3)
+            print(f"[t2v] Injecting style LoRA: {style_lora_path} @ model={lora_strength} clip={round(lora_strength*0.75,3)} (from input '{lora_name}')", flush=True)
         else:
             # No style - use Ghibli LoRA at 0.0 strength (effectively disabled)
             workflow["5"]["inputs"]["lora_name"] = "ltx2\\ltx-2-19b-ghibli-style-lora.safetensors"
             workflow["5"]["inputs"]["strength_model"] = 0.0
             workflow["5"]["inputs"]["strength_clip"] = 0.0
+            if lora_name:
+                print(f"[t2v] Style LoRA not found for '{lora_name}', falling back to disabled Ghibli placeholder", flush=True)
+            else:
+                print(f"[t2v] No style requested, using base model only (no LoRA)", flush=True)
 
         # Inject text/dims/seed at the dict level too (cleaner than string replace)
         workflow["6"]["inputs"]["text"] = prompt or "cinematic motion, smooth camera movement"

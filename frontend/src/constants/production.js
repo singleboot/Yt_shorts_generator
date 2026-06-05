@@ -17,6 +17,26 @@ export const AI_STYLES = [
   { id: 'golden_age_comic', name: 'Golden Age Comic', icon: '📰', desc: 'Vintage 1940s comic art' },
 ];
 
+// Mirror of backend app.config.STYLE_LORAS. Shows the user which LoRA file
+// will be injected for a given style. Keep in sync with backend changes.
+export const STYLE_LORA_PATHS = {
+  cozyfelt: 'ltx2/CozyFelt.safetensors',
+  fantasy_painterly: 'ltx2/Fantasy_Painterly.safetensors',
+  paper_cut_out_style: 'ltx2/PaperCutOutStyle.safetensors',
+  fantasy_anime: 'ltx2/Fantasy_Anime.safetensors',
+  cinematic_sci_fi_cyberpunk: 'ltx2/Cinematic_sci-fi-cyberpunk.safetensors',
+  fantasy_realism: 'ltx2/Fantasy_Realism.safetensors',
+  fantasy_puppet_style: 'ltx2/FantasyPuppetStyle.safetensors',
+  wild_west: 'ltx2/Wild_West.safetensors',
+  post_apocalyptic: 'ltx2/Post_Apocalyptic.safetensors',
+  claymation: 'ltx2/Claymation.safetensors',
+  pixar_toon: 'ltx2/Pixar_Toon.safetensors',
+  ghibli: 'ltx2/ghibli.safetensors',
+  walgro_style: 'ltx2/walgro.safetensors',
+  goldenboy: 'ltx2/goldenboy.comfy.safetensors',
+  golden_age_comic: 'ltx2/GoldenAgeComic.safetensors',
+};
+
 export const VOICES = [
   { id: 'aiden', name: 'Aiden', gender: 'Male', locale: 'English' },
   { id: 'dylan', name: 'Dylan', gender: 'Male', locale: 'English' },

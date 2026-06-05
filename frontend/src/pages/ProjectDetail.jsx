@@ -6,7 +6,7 @@ import axios from 'axios';
 import VideoCard from './VideoCard';
 import EditVideoModal from './EditVideoModal';
 import { CATEGORIES, SUBJECTS } from '../constants/categories';
-import { AI_STYLES, VOICES, MUSIC_GENRES } from '../constants/production';
+import { AI_STYLES, VOICES, MUSIC_GENRES, STYLE_LORA_PATHS } from '../constants/production';
 
 const DURATIONS = [
   { label: '30s', value: 30, scenes: 3 },
@@ -991,6 +991,14 @@ function ProjectDetail() {
                           onChange={(e) => setLoraStrength(parseFloat(e.target.value))}
                           className="w-full max-w-xs accent-[#C6F11D]"
                         />
+                        <div className="text-[10px] text-[#5F6772] mt-1.5 flex items-center gap-1.5 font-mono">
+                          <Palette className="h-3 w-3 shrink-0" />
+                          <span className="shrink-0 text-[#9AA0A6]">→</span>
+                          <span className="truncate">{STYLE_LORA_PATHS[selectedStyle] || 'unknown style'}</span>
+                          <span className="shrink-0">@</span>
+                          <span className="shrink-0 text-[#C6F11D]">{loraStrength.toFixed(1)}</span>
+                          <span className="shrink-0">strength</span>
+                        </div>
                       </div>
                     )}
                   </div>

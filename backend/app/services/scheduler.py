@@ -301,8 +301,21 @@ class SchedulerService:
             if override.get("lora_strength") is not None:
                 visual_settings["lora_strength"] = override["lora_strength"]
         
+        # Resolve LoRA from style first so we can log the actual file the pipeline will use
+        style_key = visual_settings.get("ai_style", "")
+        lora_name = visuals_service._resolve_lora(style_key) if style_key else None
+        lora_strength = visual_settings.get("lora_strength", 0.6)
+
+        # Surface LoRA resolution in the job log so the user can see what was used
+        if not style_key:
+            t2v_log = f"Video {video_num}/{video_count} - No style set, using base model (no style LoRA)"
+        elif lora_name:
+            t2v_log = f"Video {video_num}/{video_count} - Style '{style_key}' -> {lora_name.split(chr(92))[-1]} @ {lora_strength} strength"
+        else:
+            t2v_log = f"Video {video_num}/{video_count} - Style '{style_key}' LoRA not found in models/loras, falling back to base model"
+
         job.progress = 30
-        job.logs = f"Video {video_num}/{video_count} - Generating t2v clips (this takes a while)..."
+        job.logs = t2v_log
         db.commit()
 
         # 4. Generate t2v scene videos (NEW PIPELINE - pure LTX t2v, no i2v, no images)
@@ -315,13 +328,6 @@ class SchedulerService:
             job.status = "cancelled"
             db.commit()
             return
-
-        # Resolve LoRA from style
-        lora_name = visuals_service._resolve_lora(
-            visual_settings.get("custom_lora", "") or
-            visual_settings.get("ai_style", "")
-        )
-        lora_strength = visual_settings.get("lora_strength", 0.6)
 
         scenes = script_data.get("scenes", [])
 
