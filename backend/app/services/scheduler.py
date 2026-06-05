@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime, timedelta
 from typing import List
+from pathlib import Path
 from sqlalchemy import func
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -294,6 +295,18 @@ class SchedulerService:
         job.logs = f"Video {video_num}/{video_count} - Generating voiceover..."
         db.commit()
 
+        # Look up the actual saved script (created by generate-scripts endpoint) for this video_index
+        # to get any per-video overrides (voice, music, etc.)
+        existing_script = db.query(models.Script).filter(
+            models.Script.project_id == project.id,
+            models.Script.video_index == video_num - 1
+        ).first()
+        script_vo = {}
+        if existing_script and existing_script.video_overrides:
+            script_vo = existing_script.video_overrides
+            if isinstance(script_vo, str):
+                script_vo = json.loads(script_vo)
+
         # 5. Generate audio
         effective_voice = audio_settings.get("voice_id", "en-US-AriaNeural")
         voice_custom = audio_settings.get("voice_custom", "")
@@ -322,18 +335,6 @@ class SchedulerService:
         job.progress = 70
         job.logs = f"Video {video_num}/{video_count} - Getting background music..."
         db.commit()
-
-        # 5b. Get background music (use music_prompt from script video_overrides if available)
-        # Look up the actual saved script (created by generate-scripts endpoint) for this video_index
-        existing_script = db.query(models.Script).filter(
-            models.Script.project_id == project.id,
-            models.Script.video_index == video_num - 1
-        ).first()
-        script_vo = {}
-        if existing_script and existing_script.video_overrides:
-            script_vo = existing_script.video_overrides
-            if isinstance(script_vo, str):
-                script_vo = json.loads(script_vo)
 
         # Per-video override music_genre takes precedence over project-level
         effective_music_genre = (script_vo.get("music_genre") if script_vo.get("music_genre") else audio_settings.get("music_genre", "ambient"))
@@ -557,10 +558,12 @@ class SchedulerService:
                 job_ids.append(job.id)
             
             # Run immediately in background
+            # NOTE: BackgroundScheduler defaults to local timezone; use datetime.now()
+            # to match (datetime.utcnow() would schedule 5h+ in the future in IST)
             self.scheduler.add_job(
                 self._process_job_queue,
                 "date",
-                run_date=datetime.utcnow() + timedelta(seconds=2),
+                run_date=datetime.now() + timedelta(seconds=2),
                 id=f"manual_batch_{project_id}",
                 replace_existing=True
             )
@@ -706,7 +709,7 @@ class SchedulerService:
             self.scheduler.add_job(
                 self._process_job_queue,
                 "date",
-                run_date=datetime.utcnow() + timedelta(seconds=2),
+                run_date=datetime.now() + timedelta(seconds=2),
                 id=f"regen_video_{project_id}_{video_index}",
                 replace_existing=True
             )
