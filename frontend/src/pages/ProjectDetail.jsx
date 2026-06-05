@@ -367,6 +367,23 @@ function ProjectDetail() {
     }
   };
 
+  const handleGenerateOrCancel = () => {
+    if (generatingScripts) {
+      handleCancelScripts();
+      return;
+    }
+    if (generating) {
+      handleCancelVideos();
+      return;
+    }
+    const hasScripts = videos.filter(v => v.script).length > 0;
+    if (!hasScripts) {
+      handleGenerateScripts();
+    } else {
+      handleGenerateVideos();
+    }
+  };
+
   const handleRegenScript = async (videoIndex) => {
     try {
       const res = await api.post(`/projects/${id}/videos/${videoIndex}/regenerate-script`);
@@ -645,33 +662,19 @@ function ProjectDetail() {
           <p className="text-xs text-[#9AA0A6]">{postedCount} posted{archivedCount > 0 ? ` · ${archivedCount} archived` : ''}</p>
           <div className="flex items-center gap-2 flex-wrap justify-end">
             {phase !== 'videos' && (
-              generatingScripts ? (
-                <button
-                  onClick={handleCancelScripts}
-                  className="neo-btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-[11px] border-[#FF5757] text-[#FF5757] hover:bg-[rgba(255,87,87,0.1)]"
-                >
-                  <Loader2 className="h-3 w-3 animate-spin" /> Cancel
-                </button>
-              ) : (
-                <button
-                  onClick={handleGenerateScripts}
-                  disabled={generatingScripts || trendingNowLoading || (sourceType === 'topic' ? (!(topic||'').trim() || !category) : !(url||'').trim())}
-                  className="neo-btn-primary flex items-center gap-1.5 px-3 py-1.5 text-[11px]"
-                >
-                  <FileText className="h-3 w-3" /> Generate {genCount} Scripts
-                </button>
-              )
-            )}
-            {phase !== 'videos' && !generatingScripts && videos.filter(v => v.script).length > 0 && (
               <button
-                onClick={handleGenerateVideos}
-                disabled={generating || videos.filter(v => v.script).length === 0}
-                className="neo-btn-primary flex items-center gap-1.5 px-3 py-1.5 text-[11px]"
+                onClick={handleGenerateOrCancel}
+                disabled={!generatingScripts && !generating && trendingNowLoading || (!generatingScripts && !generating && sourceType === 'topic' ? (!(topic||'').trim() || !category) : false)}
+                className={`neo-btn-primary flex items-center gap-1.5 px-3 py-1.5 text-[11px] ${generatingScripts || generating ? 'border-[#FF5757] text-[#FF5757] hover:bg-[rgba(255,87,87,0.1)]' : ''}`}
               >
-                {generating ? (
-                  <><Loader2 className="h-3 w-3 animate-spin" /> Starting...</>
-                ) : (
+                {generatingScripts ? (
+                  <><Loader2 className="h-3 w-3 animate-spin" /> Cancel</>
+                ) : generating ? (
+                  <><Loader2 className="h-3 w-3 animate-spin" /> Cancel</>
+                ) : videos.filter(v => v.script).length > 0 ? (
                   <><Video className="h-3 w-3" /> Generate {videos.filter(v => v.script).length} Videos</>
+                ) : (
+                  <><FileText className="h-3 w-3" /> Generate {genCount} Scripts</>
                 )}
               </button>
             )}
