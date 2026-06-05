@@ -19,11 +19,21 @@
       "title": "Load LTX 2.3 Checkpoint"
     }
   },
+  "22": {
+    "inputs": {
+      "model": ["2", 0],
+      "triton_kernels": true
+    },
+    "class_type": "LTX2MemoryEfficientSageAttentionPatch",
+    "_meta": {
+      "title": "LTX2 SageAttention Patch (Memory Efficient, triton)"
+    }
+  },
   "3": {
     "inputs": {
       "lora_name": "ltx2\\ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
       "strength_model": 0.5,
-      "model": ["2", 0]
+      "model": ["22", 0]
     },
     "class_type": "LoraLoaderModelOnly",
     "_meta": {

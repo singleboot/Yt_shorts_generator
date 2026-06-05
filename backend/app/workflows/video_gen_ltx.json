@@ -18,6 +18,16 @@
       "title": "Load Checkpoint"
     }
   },
+  "30": {
+    "inputs": {
+      "model": ["2", 0],
+      "triton_kernels": true
+    },
+    "class_type": "LTX2MemoryEfficientSageAttentionPatch",
+    "_meta": {
+      "title": "LTX2 SageAttention Patch (Memory Efficient, triton)"
+    }
+  },
   "3": {
     "inputs": {
       "text": "PLACEHOLDER_PROMPT",
@@ -68,7 +78,7 @@
       "scheduler": "simple",
       "denoise": 1,
       "model": [
-        "2",
+        "30",
         0
       ],
       "positive": [
