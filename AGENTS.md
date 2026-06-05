@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **AI SHORTS CREATOR V1** (1479 symbols, 2787 relationships, 76 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **Yt_shorts_generator** (1512 symbols, 2967 relationships, 78 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -24,10 +24,10 @@ This project is indexed by GitNexus as **AI SHORTS CREATOR V1** (1479 symbols, 2
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/AI SHORTS CREATOR V1/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/AI SHORTS CREATOR V1/clusters` | All functional areas |
-| `gitnexus://repo/AI SHORTS CREATOR V1/processes` | All execution flows |
-| `gitnexus://repo/AI SHORTS CREATOR V1/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/Yt_shorts_generator/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/Yt_shorts_generator/clusters` | All functional areas |
+| `gitnexus://repo/Yt_shorts_generator/processes` | All execution flows |
+| `gitnexus://repo/Yt_shorts_generator/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 

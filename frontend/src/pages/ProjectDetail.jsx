@@ -9,11 +9,11 @@ import { CATEGORIES, SUBJECTS } from '../constants/categories';
 import { AI_STYLES, VOICES, MUSIC_GENRES, STYLE_LORA_PATHS } from '../constants/production';
 
 const DURATIONS = [
-  { label: '30s', value: 30, scenes: 3 },
-  { label: '45s', value: 45, scenes: 5 },
-  { label: '60s', value: 60, scenes: 7 },
-  { label: '90s', value: 90, scenes: 7 },
-  { label: '120s', value: 120, scenes: 8 },
+  { label: '30s', value: 30, scenes: 5 },
+  { label: '45s', value: 45, scenes: 7 },
+  { label: '60s', value: 60, scenes: 10 },
+  { label: '90s', value: 90, scenes: 15 },
+  { label: '120s', value: 120, scenes: 20 },
 ];
 
 const PER_PAGE = 8;

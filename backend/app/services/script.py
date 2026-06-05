@@ -54,22 +54,21 @@ class ScriptService:
                               voice_custom: str = None, music_custom: str = None) -> Dict:
         """Generate a full script with scenes using Ollama."""
 
-        # Dynamic scene count based on duration
-        # 30s → 3 scenes (~10s each)
-        # 1min → 5 scenes (~12s each)
-        # 2min → 8 scenes (~15s each)
         if duration <= 30:
-            num_scenes = 3
-            per_scene = 10
-        elif duration <= 60:
             num_scenes = 5
-            per_scene = 12
-        elif duration <= 90:
+            per_scene = 6
+        elif duration <= 45:
             num_scenes = 7
-            per_scene = 13
+            per_scene = 6
+        elif duration <= 60:
+            num_scenes = 10
+            per_scene = 6
+        elif duration <= 90:
+            num_scenes = 15
+            per_scene = 6
         else:
-            num_scenes = 8
-            per_scene = 15
+            num_scenes = 20
+            per_scene = 6
 
         # Category-specific tone instructions
         if category.lower() in ("history", "historical"):
