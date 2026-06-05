@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Activity, CheckCircle, XCircle, Clock, AlertCircle, RotateCw } from 'lucide-react';
+import { Activity, CheckCircle, XCircle, Clock, AlertCircle, RotateCw, Trash2 } from 'lucide-react';
 import api from '../api/client';
 
 function JobMonitor() {
@@ -25,6 +25,24 @@ function JobMonitor() {
   const cancelJob = async (id) => {
     try {
       await api.post(`/jobs/${id}/cancel`);
+      loadJobs();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const clearFinished = async () => {
+    try {
+      await api.post('/jobs/clear-finished');
+      loadJobs();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const clearAll = async () => {
+    try {
+      await api.post('/jobs/clear-all');
       loadJobs();
     } catch (e) {
       console.error(e);
@@ -63,6 +81,21 @@ function JobMonitor() {
               {f}
             </button>
           ))}
+          <div className="border-l border-[#252A33] ml-1" />
+          <button
+            onClick={clearFinished}
+            className="px-3 py-2 rounded-xl text-xs text-[#9AA0A6] hover:text-[#FFC845] hover:bg-[rgba(255,200,69,0.1)] transition-all duration-150 flex items-center gap-1.5"
+          >
+            <Trash2 className="h-3 w-3" />
+            Clear Finished
+          </button>
+          <button
+            onClick={clearAll}
+            className="px-3 py-2 rounded-xl text-xs text-[#9AA0A6] hover:text-[#FF5757] hover:bg-[rgba(255,87,87,0.1)] transition-all duration-150 flex items-center gap-1.5"
+          >
+            <Trash2 className="h-3 w-3" />
+            Clear All
+          </button>
         </div>
       </div>
 

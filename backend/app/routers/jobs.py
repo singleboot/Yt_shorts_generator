@@ -79,3 +79,17 @@ async def scheduler_service_comfyui_interrupt():
     """Helper to interrupt ComfyUI from the cancel route."""
     from app.services.visuals import visuals_service
     return await visuals_service.comfyui.interrupt()
+
+@router.post("/clear-finished", response_model=dict)
+def clear_finished_jobs(db: Session = Depends(get_db)):
+    deleted = db.query(models.Job).filter(
+        models.Job.status.in_(["completed", "failed", "cancelled"])
+    ).delete(synchronize_session=False)
+    db.commit()
+    return {"deleted": deleted}
+
+@router.post("/clear-all", response_model=dict)
+def clear_all_jobs(db: Session = Depends(get_db)):
+    deleted = db.query(models.Job).delete(synchronize_session=False)
+    db.commit()
+    return {"deleted": deleted}
