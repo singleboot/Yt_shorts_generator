@@ -399,7 +399,7 @@ function ProjectDetail() {
   const handleGenerateVideos = async () => {
     setGenerating(true);
     try {
-      await api.post(`/projects/${id}/batch`, {});
+      await api.post(`/projects/${id}/batch`, { video_count: genCount });
       showToast(`Generating ${videoCount} video(s)...`);
       setPhase('videos');
       loadProject();
@@ -672,7 +672,7 @@ function ProjectDetail() {
                 ) : generating ? (
                   <><Loader2 className="h-3 w-3 animate-spin" /> Cancel</>
                 ) : videos.filter(v => v.script).length > 0 ? (
-                  <><Video className="h-3 w-3" /> Generate {videos.filter(v => v.script).length} Videos</>
+                  <><Video className="h-3 w-3" /> Generate {genCount} Videos</>
                 ) : (
                   <><FileText className="h-3 w-3" /> Generate {genCount} Scripts</>
                 )}
