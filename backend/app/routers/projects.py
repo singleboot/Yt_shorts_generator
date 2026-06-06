@@ -163,8 +163,8 @@ def list_project_videos(project_id: int, db: Session = Depends(get_db)):
         video_url = None
         if upload and upload.video_path:
             from pathlib import Path
-            video_path = Path(upload.video_path)
-            storage = Path(settings.STORAGE_DIR)
+            video_path = Path(upload.video_path).resolve()
+            storage = Path(settings.STORAGE_DIR).resolve()
             try:
                 rel = video_path.relative_to(storage)
                 video_url = f"/storage/{rel.as_posix()}"

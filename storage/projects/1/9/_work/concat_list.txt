@@ -1,5 +1,0 @@
-file 'F:\MY APP\AI SHORTS CREATOR\AI SHORTS CREATOR V1\storage\projects\1\9\_work\upscaled_00.mp4'
-file 'F:\MY APP\AI SHORTS CREATOR\AI SHORTS CREATOR V1\storage\projects\1\9\_work\upscaled_01.mp4'
-file 'F:\MY APP\AI SHORTS CREATOR\AI SHORTS CREATOR V1\storage\projects\1\9\_work\upscaled_02.mp4'
-file 'F:\MY APP\AI SHORTS CREATOR\AI SHORTS CREATOR V1\storage\projects\1\9\_work\upscaled_03.mp4'
-file 'F:\MY APP\AI SHORTS CREATOR\AI SHORTS CREATOR V1\storage\projects\1\9\_work\upscaled_04.mp4'

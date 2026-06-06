@@ -102,7 +102,7 @@ class SchedulerService:
             jobs = db.query(models.Job).filter(
                 models.Job.status == "queued",
                 models.Job.job_type.in_(["batch", "generate", "video"])
-            ).limit(3).all()
+            ).limit(50).all()
             
             for job in jobs:
                 job.status = "running"
