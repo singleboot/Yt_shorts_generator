@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Sparkles, Send, CheckCircle, AlertCircle, Loader2, Youtube, ChevronDown, ChevronUp, Hash, Play, Globe, Clock, Archive, FileText, Video, ChevronLeft, ChevronRight, Palette, Mic, Music, Volume2, Square, Captions, Type } from 'lucide-react';
+import { ArrowLeft, Sparkles, Send, CheckCircle, AlertCircle, Loader2, Youtube, ChevronDown, ChevronUp, Hash, Play, Globe, Clock, Archive, FileText, Video, ChevronLeft, ChevronRight, Palette, Mic, Music, Volume2, Square, Captions, Type, Plus } from 'lucide-react';
 import api from '../api/client';
 import axios from 'axios';
 import VideoCard from './VideoCard';
@@ -376,6 +376,36 @@ function ProjectDetail() {
     }
   };
 
+  const handleAddNewVideos = async () => {
+    if (sourceType === 'topic' && !(topic||'').trim()) {
+      showToast('Enter a subject', 'warning');
+      return;
+    }
+    if (sourceType === 'url' && !(url||'').trim()) {
+      showToast('Enter a URL', 'warning');
+      return;
+    }
+    try {
+      const payload = { count: genCount, duration, source_type: 'topic', category };
+      if (sourceType === 'topic') {
+        payload.category = category;
+        payload.topic = (topic||'').trim();
+      } else {
+        payload.url = url.trim();
+        payload.category = category || 'tech';
+      }
+      const res = await api.post(`/projects/${id}/add-videos`, payload);
+      if (res.data.status === 'success') {
+        showToast(`+ ${res.data.added} new video(s) appended at index ${res.data.start_index}`);
+        setPhase('videos');
+        await loadProject();
+      }
+    } catch (e) {
+      const msg = e?.response?.data?.detail || 'Failed to add videos';
+      showToast(msg, 'error');
+    }
+  };
+
   const handleGenerateOrCancel = () => {
     if (generatingScripts) {
       handleCancelScripts();
@@ -386,10 +416,13 @@ function ProjectDetail() {
       return;
     }
     const hasScripts = videos.filter(v => v.script).length > 0;
+    const hasVideos = videos.filter(v => v.upload || v.job).length > 0;
     if (!hasScripts) {
       handleGenerateScripts();
-    } else {
+    } else if (!hasVideos) {
       handleGenerateVideos();
+    } else {
+      handleAddNewVideos();
     }
   };
 
@@ -709,23 +742,36 @@ function ProjectDetail() {
           <p className="text-sm font-semibold text-[#F5F5F5]">{readyCount}/{videoCount} videos ready</p>
           <p className="text-xs text-[#9AA0A6]">{postedCount} posted{archivedCount > 0 ? ` · ${archivedCount} archived` : ''}</p>
           <div className="flex items-center gap-2 flex-wrap justify-end">
-            {phase !== 'videos' && (
-              <button
-                onClick={handleGenerateOrCancel}
-                disabled={!generatingScripts && !generating && trendingNowLoading || (!generatingScripts && !generating && sourceType === 'topic' ? (!(topic||'').trim() || !category) : false)}
-                className={`neo-btn-primary flex items-center gap-1.5 px-3 py-1.5 text-[11px] ${generatingScripts || generating ? 'border-[#FF5757] text-[#FF5757] hover:bg-[rgba(255,87,87,0.1)]' : ''}`}
-              >
-                {generatingScripts ? (
-                  <><Loader2 className="h-3 w-3 animate-spin" /> Cancel</>
-                ) : generating ? (
-                  <><Loader2 className="h-3 w-3 animate-spin" /> Cancel</>
-                ) : videos.filter(v => v.script).length > 0 ? (
-                  <><Video className="h-3 w-3" /> Generate {genCount} Videos</>
-                ) : (
-                  <><FileText className="h-3 w-3" /> Generate {genCount} Scripts</>
-                )}
-              </button>
-            )}
+            {(() => {
+              const hasScripts = videos.filter(v => v.script).length > 0;
+              const hasVideos = videos.filter(v => v.upload || v.job).length > 0;
+              const label = generatingScripts
+                ? 'Cancel'
+                : generating
+                ? 'Cancel'
+                : !hasScripts
+                ? `Generate ${genCount} Scripts`
+                : !hasVideos
+                ? `Generate ${genCount} Videos`
+                : `+ Add ${genCount} New Videos`;
+              const Icon = generatingScripts || generating
+                ? Loader2
+                : !hasScripts
+                ? FileText
+                : !hasVideos
+                ? Video
+                : Plus;
+              return (
+                <button
+                  onClick={handleGenerateOrCancel}
+                  disabled={!generatingScripts && !generating && trendingNowLoading || (!generatingScripts && !generating && sourceType === 'topic' ? (!(topic||'').trim() || !category) : false)}
+                  className={`neo-btn-primary flex items-center gap-1.5 px-3 py-1.5 text-[11px] ${generatingScripts || generating ? 'border-[#FF5757] text-[#FF5757] hover:bg-[rgba(255,87,87,0.1)]' : ''}`}
+                >
+                  <Icon className={`h-3 w-3 ${generatingScripts || generating ? 'animate-spin' : ''}`} />
+                  {label}
+                </button>
+              );
+            })()}
             {readyCount > 0 && (
               <button
                 onClick={handlePostAll}
@@ -1293,17 +1339,6 @@ function ProjectDetail() {
             <span className="text-[#9AA0A6]">{readyCount}/{videoCount} ready</span>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={handleGenerateVideos}
-              disabled={generating || videos.filter(v => v.script).length === 0}
-              className="neo-btn-primary flex items-center gap-1.5 px-3 py-1.5 text-[11px] disabled:opacity-30"
-            >
-              {generating ? (
-                <><Loader2 className="h-3 w-3 animate-spin" /> Starting...</>
-              ) : (
-                <><Video className="h-3 w-3" /> Start Generation</>
-              )}
-            </button>
             <button
               onClick={handleCancelVideos}
               className="neo-btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-[11px] border-[#FF5757] text-[#FF5757] hover:bg-[rgba(255,87,87,0.1)]"

@@ -18,6 +18,14 @@ class GenerateScriptsRequest(BaseModel):
     topic: str = None
     url: str = None
 
+class AddVideosRequest(BaseModel):
+    count: int = 1
+    duration: int = None
+    source_type: str = None
+    category: str = None
+    topic: str = None
+    url: str = None
+
 @router.get("/", response_model=list)
 def list_projects(db: Session = Depends(get_db)):
     projects = db.query(models.Project).all()
@@ -788,6 +796,181 @@ def generate_scripts(project_id: int, body: GenerateScriptsRequest = Body(Genera
         })
 
     return {"status": "success", "scripts": results, "video_count": video_count}
+
+
+@router.post("/{project_id}/add-videos", response_model=dict)
+def add_new_videos(project_id: int, body: AddVideosRequest = Body(AddVideosRequest()), db: Session = Depends(get_db)):
+    """Append N new scripts at max(video_index)+1..+N and queue video jobs for them.
+
+    Used by the "+ Add N New Videos" button when a project already has scripts/videos.
+    Does NOT touch existing scripts or jobs - safe to call when a pipeline is mid-run.
+    """
+    import json as _json
+    import asyncio as _aio
+    from datetime import datetime, timedelta
+    from app.services.research import research_service
+    from app.services.script import script_service
+    from app.services.scheduler import scheduler_service
+
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    count = max(1, min(32, body.count))
+    if body.category:
+        project.category = body.category
+    if body.topic:
+        project.source_value = body.topic
+        project.source_type = "auto_research"
+    if body.url:
+        project.source_value = body.url
+        project.source_type = "url"
+    if body.source_type:
+        project.source_type = body.source_type
+    if body.duration:
+        vs = project.visual_settings
+        if isinstance(vs, str):
+            vs = _json.loads(vs) if vs else {}
+        elif vs is None:
+            vs = {}
+        elif isinstance(vs, dict):
+            vs = dict(vs)
+        vs["total_duration"] = body.duration
+        project.visual_settings = vs
+    db.commit()
+
+    schedule_settings = project.schedule_settings
+    if isinstance(schedule_settings, str):
+        schedule_settings = _json.loads(schedule_settings) if schedule_settings else {}
+    visual_settings = project.visual_settings
+    if isinstance(visual_settings, str):
+        visual_settings = _json.loads(visual_settings) if visual_settings else {}
+    duration = visual_settings.get("total_duration", 45)
+    audio_settings = project.audio_settings
+    if isinstance(audio_settings, str):
+        audio_settings = _json.loads(audio_settings) if audio_settings else {}
+    elif not isinstance(audio_settings, dict):
+        audio_settings = {}
+    voice_id = audio_settings.get("voice_id", "en-US-AriaNeural")
+    voice_custom = audio_settings.get("voice_custom", "")
+    music_genre = audio_settings.get("music_genre", "ambient")
+    music_custom = audio_settings.get("music_custom", "")
+
+    def run_async(coro):
+        try:
+            loop = _aio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    return pool.submit(_aio.run, coro).result()
+            else:
+                return loop.run_until_complete(coro)
+        except RuntimeError:
+            return _aio.run(coro)
+
+    # Find next available index for appending
+    max_index = db.query(func.max(models.Script.video_index)).filter(
+        models.Project.id == project_id
+    ).scalar() or -1
+    start_index = max_index + 1
+
+    new_scripts = []
+    new_indices = []
+    for offset in range(count):
+        i = start_index + offset
+        new_indices.append(i)
+
+        if project.source_type == "url" and project.source_value:
+            web_content = run_async(research_service.summarize_webpage(project.source_value))
+            topic = f"{project.source_value} part {i + 1}"
+            context = web_content
+        else:
+            research = run_async(research_service.research_topic(
+                f"{project.source_value} part {i + 1}",
+                project.category
+            ))
+            topic = research["topic"]
+            context = research["context"]
+
+        script_data = run_async(script_service.generate_script(
+            topic=topic,
+            category=project.category,
+            context=context,
+            duration=duration,
+            voice_id=voice_id,
+            voice_custom=voice_custom,
+            music_genre=music_genre,
+            music_custom=music_custom
+        ))
+
+        max_serial = db.query(func.max(models.Script.global_serial)).scalar() or 0
+        music_prompt = script_data.get("music_prompt", "")
+        pending = schedule_settings.get("pending_overrides", {}) if isinstance(schedule_settings, dict) else {}
+        pending_for_idx = pending.get(str(i), {}) or {}
+        merged_overrides = dict(pending_for_idx)
+        if music_prompt:
+            merged_overrides["music_prompt"] = music_prompt
+        video_overrides = merged_overrides if merged_overrides else None
+        script = models.Script(
+            project_id=project_id,
+            title=script_data.get("title", topic),
+            content=script_data.get("hook", "") + "\n\n" + "\n".join([s["narration_text"] for s in script_data.get("scenes", [])]),
+            scenes=script_data.get("scenes", []),
+            hashtags=",".join(script_data.get("hashtags", [])),
+            status="approved",
+            video_index=i,
+            global_serial=max_serial + 1,
+            video_overrides=video_overrides,
+        )
+        db.add(script)
+        db.commit()
+        db.refresh(script)
+        if str(i) in pending:
+            pending.pop(str(i), None)
+            schedule_settings["pending_overrides"] = pending
+            project.schedule_settings = schedule_settings
+            db.commit()
+        new_scripts.append({"index": i, "id": script.id, "title": script.title})
+
+    # Bump schedule_settings.video_count so the new indices are inside the planned range
+    new_video_count = start_index + count
+    if isinstance(schedule_settings, dict):
+        schedule_settings["video_count"] = new_video_count
+        project.schedule_settings = schedule_settings
+        db.commit()
+
+    # Queue a video job for EACH new index, tagged with the actual video_num so the
+    # scheduler hits the right video_index (not 0)
+    job_ids = []
+    for i in new_indices:
+        job = models.Job(
+            project_id=project_id,
+            job_type="video",
+            status="queued",
+            logs=f"Video {i + 1}/{new_video_count}",
+            progress=0,
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+        job_ids.append(job.id)
+        scheduler_service.scheduler.add_job(
+            scheduler_service._run_single_video_job_by_id,
+            "date",
+            run_date=datetime.now() + timedelta(seconds=2),
+            args=[job.id],
+            id=f"add_video_{project_id}_{i}",
+            replace_existing=True,
+        )
+
+    return {
+        "status": "success",
+        "added": count,
+        "start_index": start_index,
+        "scripts": new_scripts,
+        "job_ids": job_ids,
+    }
+
 
 @router.post("/{project_id}/videos/{video_index}/regenerate-script", response_model=dict)
 def regenerate_script(project_id: int, video_index: int, db: Session = Depends(get_db)):
