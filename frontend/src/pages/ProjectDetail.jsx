@@ -933,16 +933,19 @@ function ProjectDetail() {
                   <div className="flex items-center gap-3">
                     <input
                       type="number"
-                      min="4"
+                      min="1"
                       max="32"
-                      step="4"
+                      step="1"
                       value={genCount}
                       onChange={(e) => {
-                        let v = parseInt(e.target.value) || 4;
-                        v = Math.max(4, Math.min(32, v));
-                        v = Math.round(v / 4) * 4;
+                        const raw = e.target.value;
+                        if (raw === '') { setGenCount(''); return; }
+                        let v = parseInt(raw, 10);
+                        if (isNaN(v)) v = 1;
+                        v = Math.max(1, Math.min(32, v));
                         setGenCount(v);
                       }}
+                      onBlur={() => { if (genCount === '' || genCount < 1) setGenCount(1); }}
                       className="w-24 px-4 py-2.5 rounded-xl text-center bg-[#0E1116]"
                     />
                     <span className="text-xs text-[#5F6772]">
