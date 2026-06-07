@@ -20,7 +20,8 @@ REM 1. Check if Backend is already running on port 8002
 REM ---------------------------------------------------------------------------
 set "BACKEND_RUNNING=0"
 set "BACKEND_PID="
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr /R ":8002 .*LISTENING"') do (
+REM findstr regex: NO space between :8002 and :8002.*LISTENING (a space makes findstr treat it as OR)
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr /R ":8002.*LISTENING"') do (
     set "BACKEND_RUNNING=1"
     set "BACKEND_PID=%%a"
 )
@@ -30,9 +31,18 @@ REM 2. Check if ComfyUI is already running on port 8188
 REM ---------------------------------------------------------------------------
 set "COMFYUI_RUNNING=0"
 set "COMFYUI_PID="
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr /R ":8188 .*LISTENING"') do (
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr /R ":8188.*LISTENING"') do (
     set "COMFYUI_RUNNING=1"
     set "COMFYUI_PID=%%a"
+)
+
+REM Sanity: if both ports report the SAME PID it's a parsing error - reset both
+if "!BACKEND_RUNNING!"=="1" if "!COMFYUI_RUNNING!"=="1" if "!BACKEND_PID!"=="!COMFYUI_PID!" (
+    echo [WARN] Parsing error: both ports report same PID. Re-checking...
+    set "BACKEND_RUNNING=0"
+    set "BACKEND_PID="
+    set "COMFYUI_RUNNING=0"
+    set "COMFYUI_PID="
 )
 
 if "!BACKEND_RUNNING!"=="1" (
