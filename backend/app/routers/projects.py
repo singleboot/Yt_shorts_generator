@@ -244,13 +244,15 @@ def list_project_videos(project_id: int, db: Session = Depends(get_db)):
     schedule_settings = project.schedule_settings
     if isinstance(schedule_settings, str):
         import json; schedule_settings = json.loads(schedule_settings)
-    video_count = schedule_settings.get("video_count", 1) if isinstance(schedule_settings, dict) else 1
-    
+    # video_count is computed AFTER we know the actual video indices (below).
+    # Don't trust schedule_settings.video_count - it can be stale (was set by an
+    # earlier batch to a value the user no longer wants).
+
     # Check pending overrides
     pending_overrides = {}
     if isinstance(schedule_settings, dict):
         pending_overrides = schedule_settings.get("pending_overrides", {})
-    
+
     scripts = db.query(models.Script).filter(models.Script.project_id == project_id).order_by(models.Script.video_index, models.Script.id.desc()).all()
     uploads = db.query(models.Upload).filter(models.Upload.project_id == project_id).all()
     jobs = db.query(models.Job).filter(models.Job.project_id == project_id, models.Job.job_type == "video").order_by(models.Job.created_at.desc()).all()
@@ -350,7 +352,7 @@ def list_project_videos(project_id: int, db: Session = Depends(get_db)):
             "overrides": overrides,
         })
     
-    return {"status": "success", "videos": videos, "video_count": video_count}
+    return {"status": "success", "videos": videos, "video_count": len(videos)}
 
 @router.delete("/{project_id}/videos/{video_index}", response_model=dict)
 def delete_video(project_id: int, video_index: int, db: Session = Depends(get_db)):

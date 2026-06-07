@@ -248,8 +248,12 @@ function ProjectDetail() {
       if (vidRes && vidRes.data) {
         // Don't overwrite local placeholders while scripts are generating
         if (!generatingScriptsRef.current) {
-          setVideos(vidRes.data.videos || []);
-          setVideoCount(vidRes.data.video_count || 1);
+          const incomingVideos = vidRes.data.videos || [];
+          setVideos(incomingVideos);
+          // Always derive videoCount from the actual list length - never trust
+          // the backend's video_count field (it can drift from schedule_settings).
+          // Fall back to the backend's hint only if the list is empty.
+          setVideoCount(incomingVideos.length > 0 ? incomingVideos.length : (vidRes.data.video_count || 1));
           // Detect phase based on whether any video has a job (t2v started)
           const hasJob = (vidRes.data.videos || []).some(v => v.job);
           const hasScript = (vidRes.data.videos || []).some(v => v.script);
