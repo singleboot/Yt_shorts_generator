@@ -267,9 +267,10 @@ def list_project_videos(project_id: int, db: Session = Depends(get_db)):
             pass
     
     videos = []
-    # Display range = max(video_count, max index with a script or job) so cards
-    # generated past video_count are still visible.
-    all_indices = {i for i in range(video_count)}
+    # Only show indices that have actual content (script, upload, or job).
+    # Empty slots (where video_count is set but no script exists) are not padded
+    # as cards - the frontend creates placeholders when the user clicks Generate.
+    all_indices = set()
     for s in scripts:
         all_indices.add(s.video_index)
     for j in jobs:
@@ -353,7 +354,14 @@ def list_project_videos(project_id: int, db: Session = Depends(get_db)):
 
 @router.delete("/{project_id}/videos/{video_index}", response_model=dict)
 def delete_video(project_id: int, video_index: int, db: Session = Depends(get_db)):
-    """Delete a video (script, assets, upload, files on disk) by index."""
+    """Delete a video (script, assets, upload, files on disk) by index.
+
+    For empty slots (no script) the endpoint still cleans up any orphan jobs
+    and folder for that index, so it acts as a true 'remove this card' op.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+    from app.config import settings
     project = db.query(models.Project).filter(models.Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -364,7 +372,50 @@ def delete_video(project_id: int, video_index: int, db: Session = Depends(get_db
     ).first()
 
     if not script:
-        return {"status": "error", "message": f"No script found at index {video_index}"}
+        # No script - still clean up orphan jobs and the folder for this slot
+        orphan_jobs = db.query(models.Job).filter(
+            models.Job.project_id == project_id,
+            models.Job.logs.like(f"Video {video_index + 1}/%")
+        ).all()
+        for job in orphan_jobs:
+            # Clean up prompt_logs and research_logs that FK-reference this job
+            try:
+                db.query(models.PromptLog).filter(models.PromptLog.job_id == job.id).delete()
+            except Exception:
+                pass
+            try:
+                db.query(models.ResearchLog).filter(models.ResearchLog.job_id == job.id).delete()
+            except Exception:
+                pass
+            db.delete(job)
+        # Clean up the on-disk folder for this video slot if it exists
+        try:
+            video_dir = _Path(settings.PROJECTS_DIR) / str(project_id) / "videos" / str(video_index)
+            if video_dir.exists():
+                import shutil
+                shutil.rmtree(video_dir, ignore_errors=True)
+            audio_dir = _Path(settings.PROJECTS_DIR) / str(project_id) / "audio" / str(video_index)
+            if audio_dir.exists():
+                import shutil
+                shutil.rmtree(audio_dir, ignore_errors=True)
+            final_dir = _Path(settings.PROJECTS_DIR) / str(project_id) / "final" / str(video_index)
+            if final_dir.exists():
+                import shutil
+                shutil.rmtree(final_dir, ignore_errors=True)
+        except Exception:
+            pass
+        # Lower schedule_settings.video_count if it was set above this index
+        try:
+            ss = project.schedule_settings
+            if isinstance(ss, str):
+                ss = _json.loads(ss) if ss else {}
+            if isinstance(ss, dict) and ss.get("video_count", 1) > video_index + 1:
+                ss["video_count"] = video_index  # truncate to this index
+                project.schedule_settings = ss
+        except Exception:
+            pass
+        db.commit()
+        return {"status": "success", "message": f"Empty slot {video_index + 1} cleared"}
 
     # Delete associated assets on disk then from DB
     assets = db.query(models.Asset).filter(models.Asset.script_id == script.id).all()
@@ -397,6 +448,16 @@ def delete_video(project_id: int, video_index: int, db: Session = Depends(get_db
         models.Job.logs.like(f"Video {video_index + 1}/%")
     ).all()
     for job in jobs:
+        # Clean up prompt_logs and research_logs that FK-reference this job
+        # (otherwise SQLite blocks the delete with FOREIGN KEY constraint failed)
+        try:
+            db.query(models.PromptLog).filter(models.PromptLog.job_id == job.id).delete()
+        except Exception:
+            pass
+        try:
+            db.query(models.ResearchLog).filter(models.ResearchLog.job_id == job.id).delete()
+        except Exception:
+            pass
         db.delete(job)
 
     if script.video_overrides:
