@@ -389,8 +389,13 @@ function ProjectDetail() {
       showToast('Enter a URL', 'warning');
       return;
     }
+    // Step 1: append N new scripts at max(video_index)+1..+N. Do NOT queue
+    // video jobs - the user wants to review/regen each script first, then
+    // click 'Generate Video' per card.
+    setGeneratingScripts(true);
+    generatingScriptsRef.current = true;
     try {
-      const payload = { count: genCount, duration, source_type: 'topic', category };
+      const payload = { video_count: genCount, duration, source_type: 'topic', category };
       if (sourceType === 'topic') {
         payload.category = category;
         payload.topic = (topic||'').trim();
@@ -398,15 +403,19 @@ function ProjectDetail() {
         payload.url = url.trim();
         payload.category = category || 'tech';
       }
-      const res = await api.post(`/projects/${id}/add-videos`, payload);
+      const res = await api.post(`/projects/${id}/generate-scripts`, payload);
       if (res.data.status === 'success') {
-        showToast(`+ ${res.data.added} new video(s) appended at index ${res.data.start_index}`);
-        setPhase('videos');
+        showToast(`+ ${res.data.scripts.length} new script(s) ready. Review, then click Generate Video on each.`);
+        setPhase('scripts');
+        setPage(1);
         await loadProject();
       }
     } catch (e) {
-      const msg = e?.response?.data?.detail || 'Failed to add videos';
+      const msg = e?.response?.data?.detail || 'Failed to add scripts';
       showToast(msg, 'error');
+    } finally {
+      generatingScriptsRef.current = false;
+      setGeneratingScripts(false);
     }
   };
 

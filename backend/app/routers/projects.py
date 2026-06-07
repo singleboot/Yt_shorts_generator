@@ -858,7 +858,7 @@ def generate_scripts(project_id: int, body: GenerateScriptsRequest = Body(Genera
             "status": "new",
         })
 
-    return {"status": "success", "scripts": results, "video_count": video_count}
+    return {"status": "success", "scripts": results, "video_count": start_index + len(results)}
 
 
 @router.post("/{project_id}/add-videos", response_model=dict)
@@ -1154,11 +1154,11 @@ def regenerate_script(project_id: int, video_index: int, db: Session = Depends(g
 
 @router.post("/{project_id}/videos/{video_index}/generate", response_model=dict)
 def generate_single_video(project_id: int, video_index: int, db: Session = Depends(get_db)):
-    """Generate a single video for a specific script index.
+    """Queue a video job for a specific script index.
 
-    Deletes any existing script + assets for this index first (just like regenerate-script),
-    then creates a queued job. The scheduler will generate a fresh script and run the full
-    t2v pipeline.
+    The user has already approved/reviewed the script. The scheduler reuses
+    the existing script as-is (does NOT regenerate it) and runs the rest of
+    the pipeline (t2v, voice, music, assembly).
     """
     import json as _json
     from datetime import datetime, timedelta
@@ -1167,15 +1167,17 @@ def generate_single_video(project_id: int, video_index: int, db: Session = Depen
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Delete existing script + assets for this video_index (avoids duplicates)
+    # Sanity: there should be a script for this index. If not, refuse - the
+    # caller should use the scripts-generation path first.
     existing = db.query(models.Script).filter(
         models.Script.project_id == project_id,
         models.Script.video_index == video_index
     ).first()
-    if existing:
-        db.query(models.Asset).filter(models.Asset.script_id == existing.id).delete()
-        db.delete(existing)
-        db.commit()
+    if not existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No script at index {video_index}. Generate scripts first.",
+        )
 
     # Clear stale batch/generate jobs for this project to prevent extra processing
     db.query(models.Job).filter(

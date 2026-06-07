@@ -290,33 +290,63 @@ class SchedulerService:
                 video_index=video_num - 1,
             ))
         topic = research["topic"]
-        
+
         job.progress = 15
-        job.logs = f"Video {video_num}/{video_count} - Generating script..."
+        job.logs = f"Video {video_num}/{video_count} - Checking for existing script..."
         db.commit()
-        
-        # 2. Generate script
-        script_data = run_async(script_service.generate_script(
-            topic=topic,
-            category=project.category,
-            context=research["context"],
-            duration=duration
-        ))
-        
-        # 3. Save script
-        max_serial = db.query(func.max(models.Script.global_serial)).scalar() or 0
-        script = models.Script(
-            project_id=project.id,
-            title=script_data.get("title", topic),
-            content=script_data.get("hook", "") + "\n\n" + "\n".join([s["narration_text"] for s in script_data.get("scenes", [])]),
-            scenes=script_data.get("scenes", []),
-            hashtags=",".join(script_data.get("hashtags", [])),
-            status="approved",
-            video_index=video_num - 1,
-            global_serial=max_serial + 1
-        )
-        db.add(script)
-        db.commit()
+
+        # 2. Use the existing script if one is already saved for this video_index
+        #    (the user may have reviewed and approved it). Only run the LLM
+        #    script generation step if no script exists yet.
+        existing_script = db.query(models.Script).filter(
+            models.Script.project_id == project.id,
+            models.Script.video_index == video_num - 1
+        ).first()
+
+        if existing_script and existing_script.scenes:
+            # Reuse the reviewed/approved script as-is
+            import json as _json
+            scenes_data = existing_script.scenes
+            if isinstance(scenes_data, str):
+                scenes_data = _json.loads(scenes_data) if scenes_data else []
+            script_data = {
+                "title": existing_script.title,
+                "hook": (existing_script.content or "").split("\n\n")[0] if existing_script.content else "",
+                "scenes": scenes_data,
+                "hashtags": [h for h in (existing_script.hashtags or "").split(",") if h],
+                "music_prompt": "",
+            }
+            job.logs = f"Video {video_num}/{video_count} - Using approved script"
+        else:
+            # 2b. No existing script -> generate a fresh one
+            job.logs = f"Video {video_num}/{video_count} - Generating script..."
+            db.commit()
+            script_data = run_async(script_service.generate_script(
+                topic=topic,
+                category=project.category,
+                context=research["context"],
+                duration=duration
+            ))
+
+        # 3. Save script (only if we generated a new one; otherwise the existing
+        #    script is the source of truth and we just touch its updated_at via
+        #    the job commit below)
+        if not existing_script or not existing_script.scenes:
+            max_serial = db.query(func.max(models.Script.global_serial)).scalar() or 0
+            script = models.Script(
+                project_id=project.id,
+                title=script_data.get("title", topic),
+                content=script_data.get("hook", "") + "\n\n" + "\n".join([s["narration_text"] for s in script_data.get("scenes", [])]),
+                scenes=script_data.get("scenes", []),
+                hashtags=",".join(script_data.get("hashtags", [])),
+                status="approved",
+                video_index=video_num - 1,
+                global_serial=max_serial + 1
+            )
+            db.add(script)
+            db.commit()
+        else:
+            script = existing_script
         
         # Apply per-video overrides if they exist
         override = script.video_overrides
