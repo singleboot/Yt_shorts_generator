@@ -307,6 +307,13 @@ function ProjectDetail() {
           if (hasJob) newPhase = 'videos';
           else if (hasScript) newPhase = 'scripts';
           else newPhase = 'setup';
+          // Don't override phase to 'videos' while the user is actively adding
+          // new scripts. handleAddNewVideos sets phase='scripts' before this
+          // loadProject() call returns — we must NOT clobber it back to 'videos'
+          // just because an old video has a completed job sitting in the DB.
+          if (generatingScriptsRef.current) {
+            newPhase = 'scripts';
+          }
           // Only auto-collapse/expand on PHASE TRANSITION, not on every poll —
           // otherwise the 2s poll would re-collapse a form the user just opened.
           if (newPhase !== prevPhaseRef.current) {
@@ -453,6 +460,8 @@ function ProjectDetail() {
       const res = await api.post(`/projects/${id}/generate-scripts`, payload);
       if (res.data.status === 'success') {
         showToast(`+ ${res.data.scripts.length} new script(s) ready. Review, then click Generate Video on each.`);
+        generatingScriptsRef.current = false;
+        setGeneratingScripts(false);
         setPhase('scripts');
         setPage(1);
         await loadProject();
