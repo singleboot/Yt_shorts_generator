@@ -75,6 +75,35 @@ class Settings(BaseSettings):
         "cyberpunk": "ltx2/Cinematic_sci-fi-cyberpunk.safetensors",
         "comic": "ltx2/GoldenAgeComic.safetensors",
     }
+
+    # Style to trigger words mapping. Prepended to scene visual prompts so the LoRA
+    # actually applies the intended style (otherwise the LoRA blends in weakly and
+    # the base prompt's content style dominates). Keep trigger words faithful to the
+    # LoRA training data; check the LoRA's README on Civitai for exact trigger words.
+    STYLE_LORA_TRIGGERS: dict = {
+        "cozyfelt": "cozy felt, soft wool, handcrafted, stop motion, warm lighting",
+        "fantasy_painterly": "fantasy painterly, oil painting style, rich brushstrokes, dramatic lighting",
+        "paper_cut_out_style": "paper cutout, layered paper, handcrafted, storybook, paper art",
+        "fantasy_anime": "fantasy anime, vibrant anime style, detailed, magical, glowing",
+        "cinematic_sci_fi_cyberpunk": "cinematic sci-fi, cyberpunk, neon, futuristic, blade runner, dystopian",
+        "fantasy_realism": "fantasy realism, photorealistic fantasy, epic, cinematic, hyperdetailed",
+        "fantasy_puppet_style": "fantasy puppet, stop motion puppet, handcrafted puppet, clay puppet",
+        "wild_west": "wild west, dusty frontier, cowboy, sepia, vintage western",
+        "post_apocalyptic": "post-apocalyptic, ruined city, overgrown, dusty, abandoned, gritty",
+        "claymation": "claymation, stop motion, clay, claymation style, plasticine",
+        "pixar_toon": "pixar toon, 3d animation, pixar style, disney pixar, toon shaded",
+        "ghibli": "studio ghibli, hayao miyazaki, ghibli anime, watercolor, soft pastel",
+        "walgro_style": "walgro style, painterly, vibrant colors, illustrated",
+        "goldenboy": "goldenboy, golden age comic, bold ink, vintage comic",
+        "golden_age_comic": "golden age comic, vintage comic, halftone, retro comic, 1940s comic",
+        # Legacy aliases
+        "studio_ghibli": "studio ghibli, hayao miyazaki, ghibli anime, watercolor, soft pastel",
+        "cinematic": "cinematic sci-fi, cyberpunk, neon, futuristic, blade runner, dystopian",
+        "anime": "fantasy anime, vibrant anime style, detailed, magical, glowing",
+        "realistic": "fantasy realism, photorealistic fantasy, epic, cinematic, hyperdetailed",
+        "cyberpunk": "cinematic sci-fi, cyberpunk, neon, futuristic, blade runner, dystopian",
+        "comic": "golden age comic, vintage comic, halftone, retro comic, 1940s comic",
+    }
     
     class Config:
         env_file = ".env"

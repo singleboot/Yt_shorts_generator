@@ -40,6 +40,18 @@ def _run_migrations():
     with engine.connect() as conn:
         # Check if projects.youtube_channel_id exists, add if not
         cols = [row[1] for row in conn.execute(text("PRAGMA table_info(projects)")).fetchall()]
+        if "archive_path" not in cols:
+            try:
+                conn.execute(text("ALTER TABLE projects ADD COLUMN archive_path VARCHAR"))
+                conn.commit()
+            except Exception:
+                pass
+        if "archived_at" not in cols:
+            try:
+                conn.execute(text("ALTER TABLE projects ADD COLUMN archived_at DATETIME"))
+                conn.commit()
+            except Exception:
+                pass
         if "youtube_channel_id" not in cols:
             try:
                 conn.execute(text("ALTER TABLE projects ADD COLUMN youtube_channel_id INTEGER REFERENCES youtube_channels(id)"))

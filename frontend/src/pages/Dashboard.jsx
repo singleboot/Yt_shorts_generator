@@ -1,17 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Plus, Film, Calendar, Sparkles, Trash2, ExternalLink, Send, CheckCircle, AlertCircle, Loader2, Clock, Activity, Youtube } from 'lucide-react';
+import { Plus, Film, Calendar, Sparkles, Trash2, ExternalLink, Send, CheckCircle, AlertCircle, Loader2, Clock, Activity, Youtube, Archive, RotateCcw } from 'lucide-react';
 import api from '../api/client';
 
 const STATUS_COLORS = {
   active: 'border-l-[#6BFF64]',
   generating: 'border-l-[#FFC845]',
+  archived: 'border-l-[#4DA6FF]',
   failed: 'border-l-[#FF5757]',
 };
 
 const STATUS_BADGES = {
   active: 'neo-badge-green',
   generating: 'neo-badge-amber',
+  archived: 'neo-badge-blue',
   failed: 'neo-badge-red',
 };
 
@@ -21,6 +23,7 @@ function Dashboard() {
   const [uploads, setUploads] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [toast, setToast] = useState(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(null);
 
   useEffect(() => {
     loadData();
@@ -72,14 +75,28 @@ function Dashboard() {
     }
   };
 
-  const deleteProject = async (id, name) => {
-    if (!confirm(`Delete "${name}"?`)) return;
+  const confirmDelete = async (action) => {
+    const project = showDeleteModal;
+    if (!project) return;
     try {
-      await api.delete(`/projects/${id}`);
-      showToast(`Deleted "${name}"`);
+      await api.delete(`/projects/${project.id}?action=${action}`);
+      const msg = action === 'archive' ? `Archived "${project.name}"` : `Deleted "${project.name}"`;
+      showToast(msg);
+      setShowDeleteModal(null);
       loadData();
     } catch (e) {
-      showToast('Failed to delete', 'error');
+      showToast('Operation failed', 'error');
+      setShowDeleteModal(null);
+    }
+  };
+
+  const restoreProject = async (id, name) => {
+    try {
+      await api.post(`/projects/${id}/restore`);
+      showToast(`Restored "${name}"`);
+      loadData();
+    } catch (e) {
+      showToast('Failed to restore', 'error');
     }
   };
 
@@ -187,7 +204,8 @@ function Dashboard() {
             const isGenerating = runningJobs.length > 0;
             const queuedCount = uploads.filter(u => u.project_id === project.id && u.status === 'queued').length;
             const doneCount = uploads.filter(u => u.project_id === project.id && u.status === 'done').length;
-            const statusKey = isGenerating ? 'generating' : project.status === 'active' ? 'active' : 'failed';
+            const isArchived = project.status === 'archived';
+            const statusKey = isArchived ? 'archived' : isGenerating ? 'generating' : project.status === 'active' ? 'active' : 'failed';
 
             return (
               <div
@@ -229,29 +247,49 @@ function Dashboard() {
 
                   {/* Actions */}
                   <div className="flex items-center gap-2 mt-4">
-                    <button
-                      onClick={(e) => { e.stopPropagation(); postProject(project.id, project.name); }}
-                      disabled={isGenerating}
-                      className="neo-btn-secondary flex-1 flex items-center justify-center gap-1.5 py-2 text-xs"
-                    >
-                      <Send className="h-3 w-3" />
-                      Post
-                    </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); triggerBatch(project.id, project.name); }}
-                      disabled={isGenerating}
-                      className="neo-btn-primary flex-1 flex items-center justify-center gap-1.5 py-2 text-xs"
-                    >
-                      {isGenerating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                      {isGenerating ? 'Working...' : 'Generate'}
-                    </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); deleteProject(project.id, project.name); }}
-                      disabled={isGenerating}
-                      className="p-2 rounded-lg hover:bg-[rgba(255,87,87,0.1)] text-[#5F6772] hover:text-[#FF5757] transition-colors disabled:opacity-50"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    {project.status === 'archived' ? (
+                      <>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); restoreProject(project.id, project.name); }}
+                          className="neo-btn-secondary flex-1 flex items-center justify-center gap-1.5 py-2 text-xs"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          Restore
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setShowDeleteModal(project); }}
+                          className="p-2 rounded-lg hover:bg-[rgba(255,87,87,0.1)] text-[#5F6772] hover:text-[#FF5757] transition-colors"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); postProject(project.id, project.name); }}
+                          disabled={isGenerating}
+                          className="neo-btn-secondary flex-1 flex items-center justify-center gap-1.5 py-2 text-xs"
+                        >
+                          <Send className="h-3 w-3" />
+                          Post
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); triggerBatch(project.id, project.name); }}
+                          disabled={isGenerating}
+                          className="neo-btn-primary flex-1 flex items-center justify-center gap-1.5 py-2 text-xs"
+                        >
+                          {isGenerating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                          {isGenerating ? 'Working...' : 'Generate'}
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setShowDeleteModal(project); }}
+                          disabled={isGenerating}
+                          className="p-2 rounded-lg hover:bg-[rgba(255,87,87,0.1)] text-[#5F6772] hover:text-[#FF5757] transition-colors disabled:opacity-50"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -297,6 +335,42 @@ function Dashboard() {
                 )}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Delete / Archive confirmation modal */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setShowDeleteModal(null)}>
+          <div className="neo-card p-6 max-w-md w-full mx-4" onClick={e => e.stopPropagation()}>
+            <h3 className="neo-title text-lg mb-2">Delete Project</h3>
+            <p className="text-[#9AA0A6] text-sm mb-1">
+              Deleting <span className="text-[#F5F5F5] font-semibold">"{showDeleteModal.name}"</span> will permanently remove all its data.
+            </p>
+            <p className="text-[#9AA0A6] text-sm mb-6">What would you like to do?</p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => confirmDelete('archive')}
+                className="neo-btn-secondary py-2.5 flex items-center justify-center gap-2"
+              >
+                <Archive className="h-4 w-4" />
+                Archive (compress & keep for later)
+              </button>
+              <button
+                onClick={() => confirmDelete('delete')}
+                className="py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 text-white"
+                style={{background:'#FF5757'}}
+              >
+                <Trash2 className="h-4 w-4" />
+                Delete Permanently
+              </button>
+              <button
+                onClick={() => setShowDeleteModal(null)}
+                className="neo-btn-ghost py-2 text-sm text-[#9AA0A6]"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}

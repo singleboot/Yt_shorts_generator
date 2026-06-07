@@ -6,8 +6,10 @@ from pathlib import Path
 from app.config import settings
 from app.database import init_db
 from app.seed import create_example_project
-from app.routers import projects, scripts, jobs, uploads, settings as settings_router
+from app.routers import projects, scripts, jobs, uploads, settings as settings_router, prompts, system
+from app.routers import research as research_router
 import os
+import sys
 
 # Initialize database
 init_db()
@@ -19,6 +21,25 @@ app = FastAPI(
     description="AI-powered YouTube Shorts automation platform"
 )
 
+# Auto-launch browser state
+_browser_launched = False
+_auto_launch_disabled = os.environ.get("DISABLE_AUTO_LAUNCH", "").lower() in ("1", "true", "yes")
+
+
+def _open_browser(url: str) -> None:
+    """Open the app URL in the user's default browser (best-effort)."""
+    global _browser_launched
+    if _browser_launched or _auto_launch_disabled:
+        return
+    _browser_launched = True
+    import webbrowser
+    try:
+        webbrowser.open(url)
+        print(f"   Browser auto-launched: {url}")
+    except Exception as e:
+        print(f"   Browser auto-launch failed: {e}")
+
+
 # Startup banner
 @app.on_event("startup")
 async def startup_event():
@@ -29,6 +50,24 @@ async def startup_event():
     print(f"   API: http://{settings.API_HOST}:{settings.API_PORT}/api/health")
     print(f"   ComfyUI: {settings.COMFYUI_HOST}")
     print("="*60 + "\n")
+
+    # Auto-launch the browser ONCE per server lifetime. We need to handle three
+    # cases: (1) plain `uvicorn app.main:app` — the single process is the server
+    # and we want to launch; (2) `uvicorn --reload` — the parent reloader just
+    # spawns the child, we want to launch in the child only; (3) schtask-launched
+    # uvicorn — the process IS the server, launch there.
+    # `_browser_launched` is a module-level flag; only the first startup_event
+    # that runs (regardless of which process) will set it. Since uvicorn
+    # imports the app once per process, the first to call startup wins.
+    if not _auto_launch_disabled:
+        import threading
+        import time
+        url = f"http://{settings.API_HOST}:{settings.API_PORT}"
+        def _delayed():
+            time.sleep(2.0)
+            _open_browser(url)
+        threading.Thread(target=_delayed, daemon=True).start()
+
     # Probe ComfyUI for SageAttention availability
     try:
         import httpx
@@ -70,6 +109,9 @@ app.include_router(scripts.router)
 app.include_router(jobs.router)
 app.include_router(uploads.router)
 app.include_router(settings_router.router)
+app.include_router(prompts.router)
+app.include_router(system.router)
+app.include_router(research_router.router)
 
 # Serve storage files
 storage_path = settings.STORAGE_DIR
@@ -115,4 +157,6 @@ if frontend_build.exists():
 
 if __name__ == "__main__":
     import uvicorn
+    # Auto-launch is handled by the FastAPI startup event. With --reload the
+    # startup event fires only in the child worker, so the browser opens once.
     uvicorn.run("app.main:app", host=settings.API_HOST, port=settings.API_PORT, reload=True)

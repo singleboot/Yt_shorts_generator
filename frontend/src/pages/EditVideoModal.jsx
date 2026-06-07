@@ -1,8 +1,9 @@
-import React, { useState, useRef } from 'react';
-import { X, Sparkles, RotateCcw, Volume2, Play, Square } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { X, Sparkles, RotateCcw, Volume2, Play, Square, Film, Layers, RefreshCw, AlertCircle, CheckCircle, RotateCw as Spinner } from 'lucide-react';
 import { AI_STYLES, VOICES, MUSIC_GENRES } from '../constants/production';
+import api from '../api/client';
 
-function EditVideoModal({ video, project, onClose, onSave }) {
+function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReassemble }) {
   const vs = project.visual_settings || {};
   const [selectedStyle, setSelectedStyle] = useState(video.overrides?.ai_style || vs.ai_style || 'none');
   const [selectedVoice, setSelectedVoice] = useState(video.overrides?.voice_id || vs.voice_id || 'en-US-AriaNeural');
@@ -13,6 +14,16 @@ function EditVideoModal({ video, project, onClose, onSave }) {
   const [saving, setSaving] = useState(false);
   const audioRef = useRef(null);
   const [previewPlaying, setPreviewPlaying] = useState(null);
+
+  // Tab state
+  const [tab, setTab] = useState('settings'); // 'settings' | 'scenes'
+
+  // Scene state
+  const [scenes, setScenes] = useState([]);
+  const [scenesLoading, setScenesLoading] = useState(false);
+  const [sceneRegenStatus, setSceneRegenStatus] = useState({}); // {scene_index: 'regenerating' | 'failed' | 'completed'}
+  const [reassembleStatus, setReassembleStatus] = useState(null); // null | 'running' | 'completed' | 'failed'
+  const [reassembleMsg, setReassembleMsg] = useState('');
 
   const togglePreview = (type, id) => {
     const key = `${type}:${id}`;
@@ -30,6 +41,89 @@ function EditVideoModal({ video, project, onClose, onSave }) {
       audioRef.current.play().catch(() => {});
     }
     setPreviewPlaying(key);
+  };
+
+  // Load scenes when Scenes tab is opened
+  useEffect(() => {
+    if (tab === 'scenes' && scenes.length === 0) {
+      loadScenes();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  // Poll for scene regen / reassemble completion
+  useEffect(() => {
+    const hasInflight = Object.values(sceneRegenStatus).some(s => s === 'regenerating') || reassembleStatus === 'running';
+    if (!hasInflight) return;
+    const id = setInterval(async () => {
+      try {
+        const res = await api.get(`/projects/${project.id}/videos/${video.index}/scenes`);
+        const fresh = res.data || [];
+        setScenes(fresh);
+        // Re-check status by looking for any scene without a clip
+        const next = {};
+        fresh.forEach(s => { next[s.scene_index] = s.has_clip ? 'completed' : 'regenerating'; });
+        setSceneRegenStatus(next);
+        if (reassembleStatus === 'running') {
+          // Reassemble is synchronous on backend, so if we get here, it's done
+          setReassembleStatus('completed');
+          setReassembleMsg('Final video rebuilt');
+        }
+      } catch (e) {
+        // Ignore transient errors
+      }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [sceneRegenStatus, reassembleStatus, project.id, video.index]);
+
+  const loadScenes = async () => {
+    setScenesLoading(true);
+    try {
+      const res = await api.get(`/projects/${project.id}/videos/${video.index}/scenes`);
+      setScenes(res.data || []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setScenesLoading(false);
+    }
+  };
+
+  const handleRegenScene = async (sceneIndex) => {
+    setSceneRegenStatus(prev => ({ ...prev, [sceneIndex]: 'regenerating' }));
+    try {
+      const res = await api.post(`/projects/${project.id}/videos/${video.index}/scenes/${sceneIndex}/regenerate`);
+      if (res.data?.status === 'success') {
+        setSceneRegenStatus(prev => ({ ...prev, [sceneIndex]: 'completed' }));
+        // Reload scene list
+        await loadScenes();
+        // Notify parent so it can refresh project state
+        if (onSceneRegen) onSceneRegen(video.index, sceneIndex);
+      } else {
+        setSceneRegenStatus(prev => ({ ...prev, [sceneIndex]: 'failed' }));
+      }
+    } catch (e) {
+      setSceneRegenStatus(prev => ({ ...prev, [sceneIndex]: 'failed' }));
+      alert('Scene regeneration failed: ' + (e?.response?.data?.detail || e.message));
+    }
+  };
+
+  const handleReassemble = async () => {
+    setReassembleStatus('running');
+    setReassembleMsg('Re-assembling final video...');
+    try {
+      const res = await api.post(`/projects/${project.id}/videos/${video.index}/reassemble`);
+      if (res.data?.status === 'success') {
+        setReassembleStatus('completed');
+        setReassembleMsg('Final video rebuilt');
+        if (onReassemble) onReassemble(video.index);
+      } else {
+        setReassembleStatus('failed');
+        setReassembleMsg(res.data?.message || 'Reassembly failed');
+      }
+    } catch (e) {
+      setReassembleStatus('failed');
+      setReassembleMsg(e?.response?.data?.detail || e.message || 'Reassembly failed');
+    }
   };
 
   const handleSave = async () => {
@@ -59,13 +153,43 @@ function EditVideoModal({ video, project, onClose, onSave }) {
         <div className="flex items-center justify-between p-5 border-b border-[#252A33]">
           <div>
             <h2 className="text-lg font-bold text-[#F5F5F5]">Edit Video {video.index + 1}</h2>
-            <p className="text-xs text-[#9AA0A6] mt-0.5">Changing settings will regenerate this video</p>
+            <p className="text-xs text-[#9AA0A6] mt-0.5">{tab === 'settings' ? 'Changing settings will regenerate this video' : 'Regenerate individual scenes without redoing the whole video'}</p>
           </div>
           <button onClick={onClose} className="p-2 rounded-xl hover:bg-[rgba(255,255,255,0.03)] transition-colors">
             <X className="h-4 w-4 text-[#9AA0A6]" />
           </button>
         </div>
 
+        {/* Tabs */}
+        <div className="flex border-b border-[#252A33] px-5">
+          <button
+            onClick={() => setTab('settings')}
+            className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
+              tab === 'settings'
+                ? 'border-[#C6F11D] text-[#C6F11D]'
+                : 'border-transparent text-[#9AA0A6] hover:text-[#F5F5F5]'
+            }`}
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            Settings
+          </button>
+          <button
+            onClick={() => setTab('scenes')}
+            className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
+              tab === 'scenes'
+                ? 'border-[#C6F11D] text-[#C6F11D]'
+                : 'border-transparent text-[#9AA0A6] hover:text-[#F5F5F5]'
+            }`}
+          >
+            <Film className="h-3.5 w-3.5" />
+            Scenes
+            {scenes.length > 0 && <span className="text-[10px] text-[#5F6772]">({scenes.length})</span>}
+          </button>
+        </div>
+
+        {/* SETTINGS TAB */}
+        {tab === 'settings' && (
+          <>
         {/* Style grid */}
         <div className="p-5 space-y-6">
           <div>
@@ -259,6 +383,141 @@ function EditVideoModal({ video, project, onClose, onSave }) {
             </button>
           </div>
         </div>
+          </>
+        )}
+
+        {/* SCENES TAB */}
+        {tab === 'scenes' && (
+          <div className="p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] text-[#9AA0A6]">
+                {scenesLoading ? 'Loading scenes…' : `${scenes.length} scenes • Regenerate any scene individually`}
+              </p>
+              <button
+                onClick={loadScenes}
+                className="neo-btn-ghost flex items-center gap-1.5 px-2.5 py-1 text-[10px]"
+              >
+                <RefreshCw className="h-3 w-3" />
+                Refresh
+              </button>
+            </div>
+
+            {/* Reassemble action bar */}
+            {reassembleStatus && (
+              <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-[11px] ${
+                reassembleStatus === 'running'
+                  ? 'bg-[rgba(198,241,29,0.06)] border-[rgba(198,241,29,0.3)] text-[#C6F11D]'
+                  : reassembleStatus === 'completed'
+                    ? 'bg-[rgba(107,255,100,0.06)] border-[rgba(107,255,100,0.3)] text-[#6BFF64]'
+                    : 'bg-[rgba(255,87,87,0.06)] border-[rgba(255,87,87,0.3)] text-[#FF5757]'
+              }`}>
+                {reassembleStatus === 'running' && <Spinner className="h-3 w-3 animate-spin" />}
+                {reassembleStatus === 'completed' && <CheckCircle className="h-3 w-3" />}
+                {reassembleStatus === 'failed' && <AlertCircle className="h-3 w-3" />}
+                {reassembleMsg}
+              </div>
+            )}
+
+            <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
+              {scenesLoading && (
+                <div className="text-center text-[#5F6772] text-xs py-8">
+                  <Spinner className="h-6 w-6 mx-auto mb-2 animate-spin text-[#C6F11D]" />
+                  Loading scenes…
+                </div>
+              )}
+              {!scenesLoading && scenes.length === 0 && (
+                <div className="text-center text-[#5F6772] text-xs py-8">
+                  No scenes found. Generate this video first.
+                </div>
+              )}
+              {scenes.map(s => {
+                const status = sceneRegenStatus[s.scene_index];
+                const isRegenerating = status === 'regenerating';
+                const isFailed = status === 'failed';
+                return (
+                  <div key={s.scene_index} className={`neo-card p-3 ${isRegenerating ? 'border-l-4 border-[#C6F11D]' : isFailed ? 'border-l-4 border-[#FF5757]' : ''}`}>
+                    <div className="flex items-start gap-3">
+                      <div className="flex flex-col items-center justify-center w-10 h-10 rounded-lg bg-[#050608] border border-[#252A33] shrink-0">
+                        <span className="text-[10px] text-[#5F6772]">SCENE</span>
+                        <span className="text-sm font-bold text-[#C6F11D]">{s.scene_number}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[11px] text-[#F5F5F5] line-clamp-2 leading-relaxed">
+                          "{s.narration}"
+                        </p>
+                        <div className="flex items-center gap-3 mt-1.5 text-[10px] text-[#5F6772]">
+                          <span>{s.duration_seconds?.toFixed(1)}s</span>
+                          {s.has_clip ? (
+                            <span className="text-[#6BFF64]">● clip ready</span>
+                          ) : (
+                            <span className="text-[#FFC845]">● no clip</span>
+                          )}
+                        </div>
+                        {isRegenerating && (
+                          <div className="mt-2 text-[10px] text-[#C6F11D] flex items-center gap-1.5">
+                            <Spinner className="h-3 w-3 animate-spin" />
+                            Regenerating scene... (~7 min)
+                          </div>
+                        )}
+                        {isFailed && (
+                          <div className="mt-2 text-[10px] text-[#FF5757] flex items-center gap-1.5">
+                            <AlertCircle className="h-3 w-3" />
+                            Failed
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => handleRegenScene(s.scene_index)}
+                        disabled={isRegenerating}
+                        className="neo-btn-ghost flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] shrink-0 disabled:opacity-50"
+                      >
+                        {isRegenerating ? (
+                          <Spinner className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3 w-3" />
+                        )}
+                        Regenerate
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Footer for scenes tab */}
+            <div className="flex items-center justify-between p-3 -mx-5 -mb-5 border-t border-[#252A33] bg-[#0A0C10]">
+              <div className="flex items-center gap-2 text-[11px] text-[#9AA0A6]">
+                <Layers className="h-3.5 w-3.5" />
+                <span>After regenerating scenes, click below to rebuild the final video</span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={onClose}
+                  className="neo-btn-ghost px-3 py-1.5 text-xs"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={handleReassemble}
+                  disabled={reassembleStatus === 'running'}
+                  className="neo-btn-primary px-4 py-1.5 text-xs flex items-center gap-2"
+                >
+                  {reassembleStatus === 'running' ? (
+                    <>
+                      <Spinner className="h-3 w-3 animate-spin" />
+                      Re-assembling...
+                    </>
+                  ) : (
+                    <>
+                      <Layers className="h-3 w-3" />
+                      Re-assemble Final
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -57,7 +57,19 @@ class SchedulerService:
             id="daily_research",
             replace_existing=True
         )
-        
+
+        # Periodic job-queue processor — picks up any orphaned "queued" jobs
+        # (e.g., a previous uvicorn process was killed mid-run) every 10s.
+        self.scheduler.add_job(
+            self._process_job_queue,
+            "interval",
+            seconds=10,
+            id="job_queue_picker",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True
+        )
+
         # Upload checker every 15 minutes
         self.scheduler.add_job(
             self._process_upload_queue,
@@ -174,6 +186,16 @@ class SchedulerService:
         job.progress = 100
         db.commit()
     
+    def _run_single_video_job_by_id(self, job_id: int):
+        """Wrapper that creates a DB session and runs the single video job by ID."""
+        db = SessionLocal()
+        try:
+            job = db.query(models.Job).get(job_id)
+            if job and job.status == "queued":
+                self._run_single_video_job(db, job)
+        finally:
+            db.close()
+
     def _run_single_video_job(self, db, job):
         """Generate a single video for a project."""
         import json
@@ -249,13 +271,23 @@ class SchedulerService:
         
         # 1. Research topic (URL mode or auto_research mode)
         if project.source_type == "url" and project.source_value:
-            web_content = run_async(research_service.summarize_webpage(project.source_value))
+            web_content = run_async(research_service.summarize_webpage(
+                project.source_value,
+                db=db,
+                project_id=project.id,
+                job_id=job.id,
+                video_index=video_num - 1,
+            ))
             topic = f"{project.source_value} part {video_num}"
             research = {"topic": topic, "context": web_content}
         else:
             research = run_async(research_service.research_topic(
                 f"{project.source_value} part {video_num}",
-                project.category
+                project.category,
+                db=db,
+                project_id=project.id,
+                job_id=job.id,
+                video_index=video_num - 1,
             ))
         topic = research["topic"]
         
@@ -318,9 +350,15 @@ class SchedulerService:
         job.logs = t2v_log
         db.commit()
 
-        # 4. Generate t2v scene videos (NEW PIPELINE - pure LTX t2v, no i2v, no images)
-        project_dir = settings.PROJECTS_DIR / str(project.id) / str(script.id)
-        project_dir.mkdir(parents=True, exist_ok=True)
+        # 4. Generate t2v scene videos
+        video_idx = video_num - 1
+        base_dir = settings.PROJECTS_DIR / str(project.id)
+        videos_dir = base_dir / "videos" / str(video_idx)
+        audio_dir = base_dir / "audio" / str(video_idx)
+        final_dir = base_dir / "final" / str(video_idx)
+        videos_dir.mkdir(parents=True, exist_ok=True)
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        final_dir.mkdir(parents=True, exist_ok=True)
 
         # Cancellation check right before the long ComfyUI run
         if check_cancel():
@@ -344,11 +382,14 @@ class SchedulerService:
 
         scene_clip_paths = run_async(visuals_service.generate_scene_videos(
             scenes=scenes,
-            project_dir=project_dir,
+            project_dir=videos_dir,
             lora_name=lora_name,
             lora_strength=lora_strength,
+            style_key=style_key,
             project_id=project.id,
-            video_index=video_num - 1,
+            video_index=video_idx,
+            job_id=job.id,
+            db=db,
             on_progress=scene_progress,
             is_cancelled=check_cancel,
         ))
@@ -390,7 +431,7 @@ class SchedulerService:
         audio_assets = run_async(audio_service.generate_scene_voiceovers(
             script_data.get("scenes", []),
             voice_id=speaker_for_tts,
-            project_dir=project_dir
+            project_dir=audio_dir
         ))
 
         for asset in audio_assets:
@@ -414,22 +455,23 @@ class SchedulerService:
         music_custom = script_vo.get("music_custom") if script_vo.get("music_custom") else audio_settings.get("music_custom", "")
         music_prompt = (script_vo or {}).get("music_prompt", "")
 
+        music_output_path = audio_dir / "background_music.mp3"
         if music_prompt:
             music_path = run_async(audio_service.get_background_music(
                 genre=music_prompt,
-                output_path=project_dir / "background_music.mp3",
+                output_path=music_output_path,
                 duration=duration
             ))
         elif effective_music_genre == "__custom__" and music_custom:
             music_path = run_async(audio_service.get_background_music(
                 genre=music_custom,
-                output_path=project_dir / "background_music.mp3",
+                output_path=music_output_path,
                 duration=duration
             ))
         else:
             music_path = run_async(audio_service.get_background_music(
                 genre=effective_music_genre,
-                output_path=project_dir / "background_music.mp3",
+                output_path=music_output_path,
                 duration=duration
             ))
 
@@ -437,8 +479,8 @@ class SchedulerService:
         job.logs = f"Video {video_num}/{video_count} - Assembling video..."
         db.commit()
 
-        # 6. Assemble final video (NEW: clip-based + .ass captions)
-        output_path = project_dir / "final_video.mp4"
+        # 6. Assemble final video
+        output_path = final_dir / "final_video.mp4"
 
         success = video_service.assemble_video(
             scene_clips=scene_clip_paths,
@@ -839,6 +881,247 @@ class SchedulerService:
                         }
             
             return {"status": "error", "message": "No available slot found within 30 days"}
+        finally:
+            db.close()
+
+    def regenerate_single_scene(self, project_id: int, video_index: int, scene_index: int,
+                                 seed_offset: int = 1) -> dict:
+        """Regenerate ONE scene clip without touching the rest of the pipeline.
+
+        Steps:
+        1. Load the script's scenes[scene_index]
+        2. Sanitize + prepend trigger words (same logic as full pipeline)
+        3. Call visuals_service.generate_scene_videos on a single-scene list
+        4. Overwrite videos/{idx}/scene_{NN:02d}.mp4
+        5. Update the corresponding Asset row
+
+        Args:
+            project_id: Project ID
+            video_index: 0-based video index
+            scene_index: 0-based scene index
+            seed_offset: Added to the deterministic seed so the new attempt
+                is a fresh take but stays in the same "family" as the original.
+                Default 1 (next seed in the family).
+        """
+        import json
+        import asyncio as aio
+
+        def run_async(coro):
+            try:
+                loop = aio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        future = pool.submit(aio.run, coro)
+                        return future.result()
+                else:
+                    return loop.run_until_complete(coro)
+            except RuntimeError:
+                return aio.run(coro)
+
+        db = SessionLocal()
+        try:
+            project = db.query(models.Project).get(project_id)
+            if not project:
+                return {"status": "error", "message": "Project not found"}
+
+            script = db.query(models.Script).filter(
+                models.Script.project_id == project_id,
+                models.Script.video_index == video_index,
+            ).order_by(models.Script.created_at.desc()).first()
+            if not script:
+                return {"status": "error", "message": "Script not found for this video"}
+
+            scenes = script.scenes or []
+            if scene_index < 0 or scene_index >= len(scenes):
+                return {"status": "error", "message": f"scene_index {scene_index} out of range (0..{len(scenes)-1})"}
+
+            visual_settings = json.loads(project.visual_settings) if isinstance(project.visual_settings, str) else (project.visual_settings or {})
+            caption_settings = json.loads(project.caption_settings) if isinstance(project.caption_settings, str) else (project.caption_settings or {})
+
+            # Style LoRA + strength from project
+            style_key = visual_settings.get("style", "none")
+            if style_key in ("none", "", None):
+                # Try ai_style as fallback (ProjectDetail uses ai_style)
+                style_key = visual_settings.get("ai_style", "none")
+            if style_key in ("none", "", None):
+                style_key = None
+            lora_name = visual_settings.get("lora_name") or None
+            lora_strength = float(visual_settings.get("lora_strength", 0.6) or 0.6)
+            if lora_name is None and style_key:
+                # Map style key -> LoRA filename
+                lora_name = style_key
+
+            base_dir = settings.PROJECTS_DIR / str(project_id)
+            videos_dir = base_dir / "videos" / str(video_index)
+            videos_dir.mkdir(parents=True, exist_ok=True)
+
+            scene = scenes[scene_index]
+            single_scene_list = [scene]
+
+            # Compute the trigger prefix here so the PromptLog can record it
+            # (visuals_service also computes it internally for the actual prompt)
+            trigger_words_str = None
+            if style_key:
+                triggers = settings.STYLE_LORA_TRIGGERS.get(style_key, "")
+                if triggers:
+                    trigger_words_str = triggers
+
+            # Use the same seed formula but with a small offset to get a new take
+            # while staying in the same "family"
+            def _seed_for(idx: int, desc: str) -> int:
+                base = hash((project_id, video_index, idx, desc[:50])) & 0xFFFFFFFF
+                return (base + seed_offset) & 0xFFFFFFFF
+
+            # Patch the visuals_service seed computation is inside generate_scene_videos
+            # We pass through the standard call; it will compute its own seed.
+            # For the offset we set a module-level hook on settings that the
+            # visuals_service reads in its seed formula. This keeps the seed
+            # deterministic but distinct from the original.
+            from app.config import settings as _settings_module
+            visual_settings_for_seed = dict(visual_settings)
+            visual_settings_for_seed["_regen_offset"] = seed_offset
+            visual_settings_for_seed["_trigger_words"] = trigger_words_str
+            _settings_module._active_visual_settings = visual_settings_for_seed
+            try:
+                scene_clip_paths = run_async(visuals_service.generate_scene_videos(
+                    scenes=single_scene_list,
+                    project_dir=videos_dir,
+                    lora_name=lora_name,
+                    lora_strength=lora_strength,
+                    style_key=style_key,
+                    project_id=project_id,
+                    video_index=video_index,
+                    job_id=None,
+                    db=db,
+                ))
+            finally:
+                # Clear the hook so the next full-pipeline call uses the default seed
+                try:
+                    del _settings_module._active_visual_settings
+                except AttributeError:
+                    pass
+
+            if not scene_clip_paths:
+                return {"status": "error", "message": "Scene generation returned no output"}
+
+            new_scene_path = scene_clip_paths[0]
+            # Files were saved as scene_01.mp4 (since we passed a single scene).
+            # Rename to scene_{scene_index+1:02d}.mp4
+            desired = videos_dir / f"scene_{scene_index+1:02d}.mp4"
+            if new_scene_path != desired and new_scene_path.exists():
+                if desired.exists():
+                    desired.unlink()
+                new_scene_path.rename(desired)
+
+            # Update Asset row (or create one)
+            asset = db.query(models.Asset).filter(
+                models.Asset.project_id == project_id,
+                models.Asset.script_id == script.id,
+                models.Asset.scene_index == scene_index,
+                models.Asset.asset_type == "video",
+            ).first()
+            if asset:
+                asset.local_path = str(desired)
+            else:
+                db.add(models.Asset(
+                    project_id=project_id,
+                    script_id=script.id,
+                    scene_index=scene_index,
+                    asset_type="video",
+                    source="comfyui_ltx_t2v",
+                    local_path=str(desired),
+                ))
+            db.commit()
+
+            return {
+                "status": "success",
+                "scene_index": scene_index,
+                "scene_path": str(desired),
+            }
+        finally:
+            db.close()
+
+    def reassemble_video(self, project_id: int, video_index: int) -> dict:
+        """Re-run the assembly step using existing scene clips + audio assets.
+
+        Use after per-scene regeneration to update the final video without
+        re-running the entire pipeline. Does NOT regenerate t2v, voice, or music.
+        """
+        import json
+        db = SessionLocal()
+        try:
+            project = db.query(models.Project).get(project_id)
+            if not project:
+                return {"status": "error", "message": "Project not found"}
+
+            script = db.query(models.Script).filter(
+                models.Script.project_id == project_id,
+                models.Script.video_index == video_index,
+            ).order_by(models.Script.created_at.desc()).first()
+            if not script:
+                return {"status": "error", "message": "Script not found for this video"}
+
+            scenes = script.scenes or []
+
+            visual_settings = json.loads(project.visual_settings) if isinstance(project.visual_settings, str) else (project.visual_settings or {})
+            caption_settings = json.loads(project.caption_settings) if isinstance(project.caption_settings, str) else (project.caption_settings or {})
+
+            base_dir = settings.PROJECTS_DIR / str(project_id)
+            videos_dir = base_dir / "videos" / str(video_index)
+            audio_dir = base_dir / "audio" / str(video_index)
+            final_dir = base_dir / "final" / str(video_index)
+            final_dir.mkdir(parents=True, exist_ok=True)
+
+            # Collect scene clips in order
+            scene_clips = []
+            for i in range(len(scenes)):
+                p = videos_dir / f"scene_{i+1:02d}.mp4"
+                if p.exists():
+                    scene_clips.append(p)
+            if not scene_clips:
+                return {"status": "error", "message": "No scene clips found on disk"}
+
+            # Collect audio assets
+            audio_assets = []
+            for i in range(len(scenes)):
+                a = audio_dir / f"voice_{i+1:02d}.mp3"
+                if a.exists():
+                    audio_assets.append({"path": str(a), "duration_seconds": scenes[i].get("duration_seconds", 8)})
+                else:
+                    audio_assets.append({"path": None, "duration_seconds": scenes[i].get("duration_seconds", 8)})
+
+            music_path = audio_dir / "background_music.mp3"
+            if not music_path.exists():
+                # Try fallback to common alt names
+                for alt in ("background_music_v2.mp3", "music.mp3", "bgm.mp3"):
+                    alt_path = audio_dir / alt
+                    if alt_path.exists():
+                        music_path = alt_path
+                        break
+
+            output_path = final_dir / "final_video.mp4"
+
+            music_volume = float(visual_settings.get("music_volume", 0.15) or 0.15)
+            voice_volume = 1.0
+
+            ok = video_service.assemble_video(
+                scene_clips=scene_clips,
+                audio_assets=audio_assets,
+                music_path=music_path if music_path.exists() else None,
+                scenes=scenes,
+                caption_settings=caption_settings or {},
+                output_path=output_path,
+                music_volume=music_volume,
+                voice_volume=voice_volume,
+            )
+            if not ok:
+                return {"status": "error", "message": "Assembly failed"}
+
+            return {
+                "status": "success",
+                "final_path": str(output_path),
+            }
         finally:
             db.close()
 

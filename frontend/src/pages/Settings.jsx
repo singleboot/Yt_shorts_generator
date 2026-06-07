@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Youtube, Link, Key, Server, Save, CheckCircle, XCircle, Cpu, Image, Film, Database, RefreshCw, Plus, Trash2, ExternalLink, RefreshCcw, Archive, Upload, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, Circle, X } from 'lucide-react';
+import { Youtube, Link, Key, Server, Save, CheckCircle, XCircle, Cpu, Image, Film, Database, RefreshCw, Plus, Trash2, ExternalLink, RefreshCcw, Archive, Upload, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, Circle, X, Power, PowerOff, Loader2 } from 'lucide-react';
 import api from '../api/client';
 
 function SettingsPage() {
@@ -18,6 +18,9 @@ function SettingsPage() {
   const [pendingChannel, setPendingChannel] = useState(null);
   const [pendingChannelName, setPendingChannelName] = useState('');
   const [manualAuthUrl, setManualAuthUrl] = useState('');
+  const [systemStatus, setSystemStatus] = useState(null);
+  const [serviceAction, setServiceAction] = useState(null); // null | 'starting' | 'stopping'
+  const [serviceLog, setServiceLog] = useState('');
   const pollRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -27,6 +30,9 @@ function SettingsPage() {
     checkStatuses();
     loadModelInfo();
     loadSetupInfo();
+    checkSystemStatus();
+    const statusPoll = setInterval(checkSystemStatus, 5000);
+    return () => clearInterval(statusPoll);
   }, []);
 
   const loadSetupInfo = async () => {
@@ -69,6 +75,64 @@ function SettingsPage() {
       setComfyuiStatus(cfRes.data);
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const checkSystemStatus = async () => {
+    try {
+      const res = await api.get('/system/status');
+      setSystemStatus(res.data);
+    } catch (e) {
+      console.error('System status check failed:', e);
+    }
+  };
+
+  const startServices = async () => {
+    setServiceAction('starting');
+    setServiceLog('Starting ComfyUI...');
+    try {
+      const res = await api.post('/system/start-comfyui', null, { timeout: 120000 });
+      if (res.data.status === 'success' || res.data.status === 'already_running') {
+        setServiceLog(res.data.status === 'already_running' ? 'ComfyUI was already running.' : `ComfyUI ready in ${res.data.elapsed_s}s.`);
+        setMessage('ComfyUI started successfully!');
+        setTimeout(() => setMessage(''), 3000);
+        await checkSystemStatus();
+      } else if (res.data.status === 'timeout') {
+        setServiceLog(`Timeout: ${res.data.error}`);
+        setMessage('ComfyUI failed to start in time. Check logs.');
+        setTimeout(() => setMessage(''), 5000);
+      } else {
+        setServiceLog(`Error: ${res.data.error || 'unknown'}`);
+        setMessage('Failed to start ComfyUI: ' + (res.data.error || 'unknown error'));
+        setTimeout(() => setMessage(''), 5000);
+      }
+    } catch (e) {
+      setServiceLog(`Error: ${e.message}`);
+      setMessage('Failed to start ComfyUI: ' + e.message);
+      setTimeout(() => setMessage(''), 5000);
+    } finally {
+      setServiceAction(null);
+      setTimeout(() => setServiceLog(''), 8000);
+    }
+  };
+
+  const stopServices = async () => {
+    if (!confirm('Stop ComfyUI? Any running generation will be cancelled.')) return;
+    setServiceAction('stopping');
+    setServiceLog('Stopping ComfyUI...');
+    try {
+      const res = await api.post('/system/stop-comfyui');
+      setServiceLog(`Stopped (killed ${res.data.killed_pids?.length || 0} process(es)).`);
+      setMessage('ComfyUI stopped.');
+      setTimeout(() => setMessage(''), 3000);
+      await checkSystemStatus();
+    } catch (e) {
+      setServiceLog(`Error: ${e.message}`);
+      setMessage('Failed to stop ComfyUI: ' + e.message);
+      setTimeout(() => setMessage(''), 5000);
+    } finally {
+      setServiceAction(null);
+      setTimeout(() => setServiceLog(''), 5000);
     }
   };
 
@@ -288,6 +352,127 @@ function SettingsPage() {
           </div>
         </div>
       )}
+
+      {/* Service Status / Start-Stop */}
+      <div className="neo-card p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <Power className="h-5 w-5 text-[#C6F11D]" />
+            <div>
+              <h3 className="text-lg font-semibold text-[#F5F5F5]">Services</h3>
+              <p className="text-xs text-[#9AA0A6] mt-0.5">Start or stop the ComfyUI backend (the server itself runs in the background).</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          {/* Backend status */}
+          <div className="neo-card-hover p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Server className="h-4 w-4 text-[#C6F11D]" />
+                <span className="text-sm font-semibold text-[#F5F5F5]">App Server</span>
+              </div>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-[rgba(107,255,100,0.12)] text-[#6BFF64] border border-[rgba(107,255,100,0.3)]">
+                <span className="h-1.5 w-1.5 rounded-full bg-[#6BFF64] animate-pulse" />
+                RUNNING
+              </span>
+            </div>
+            <p className="text-[10px] text-[#5F6772] font-mono">127.0.0.1:8002</p>
+          </div>
+
+          {/* ComfyUI status */}
+          <div className="neo-card-hover p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Cpu className="h-4 w-4 text-[#C6F11D]" />
+                <span className="text-sm font-semibold text-[#F5F5F5]">ComfyUI</span>
+              </div>
+              {systemStatus?.comfyui?.running ? (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-[rgba(107,255,100,0.12)] text-[#6BFF64] border border-[rgba(107,255,100,0.3)]">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#6BFF64] animate-pulse" />
+                  RUNNING
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-[rgba(255,87,87,0.12)] text-[#FF5757] border border-[rgba(255,87,87,0.3)]">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#FF5757]" />
+                  STOPPED
+                </span>
+              )}
+            </div>
+            <p className="text-[10px] text-[#5F6772] font-mono">127.0.0.1:8188</p>
+            {systemStatus?.comfyui?.info?.devices?.[0] && (
+              <p className="text-[10px] text-[#9AA0A6] mt-1">
+                {(systemStatus.comfyui.info.devices[0].vram_free / 1024**3).toFixed(1)} GB VRAM free
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Action buttons */}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={startServices}
+            disabled={serviceAction !== null || systemStatus?.comfyui?.running}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+              systemStatus?.comfyui?.running
+                ? 'bg-[rgba(107,255,100,0.08)] text-[#6BFF64] border border-[rgba(107,255,100,0.3)] cursor-default'
+                : 'bg-[#C6F11D] text-[#050608] hover:bg-[#D9FF3D] disabled:opacity-50 disabled:cursor-not-allowed'
+            }`}
+          >
+            {serviceAction === 'starting' ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Starting ComfyUI...
+              </>
+            ) : systemStatus?.comfyui?.running ? (
+              <>
+                <CheckCircle className="h-4 w-4" />
+                ComfyUI Running
+              </>
+            ) : (
+              <>
+                <Power className="h-4 w-4" />
+                Start ComfyUI
+              </>
+            )}
+          </button>
+          <button
+            onClick={stopServices}
+            disabled={serviceAction !== null || !systemStatus?.comfyui?.running}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border border-[#FF5757]/40 text-[#FF5757] hover:bg-[rgba(255,87,87,0.1)] disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+          >
+            {serviceAction === 'stopping' ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Stopping...
+              </>
+            ) : (
+              <>
+                <PowerOff className="h-4 w-4" />
+                Stop ComfyUI
+              </>
+            )}
+          </button>
+          <button
+            onClick={checkSystemStatus}
+            disabled={serviceAction !== null}
+            className="neo-btn-ghost flex items-center gap-2 px-3 py-2.5 text-xs"
+            title="Refresh status"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+          </button>
+          {serviceLog && (
+            <span className="text-[11px] text-[#9AA0A6] ml-2">{serviceLog}</span>
+          )}
+        </div>
+
+        {systemStatus?.comfyui?.info?.devices?.[0] && (
+          <p className="text-[10px] text-[#5F6772] mt-3 font-mono">
+            ComfyUI {systemStatus.comfyui.info.system?.comfyui_version} • Python {systemStatus.comfyui.info.system?.python_version?.split(' ')[0]} • PyTorch {systemStatus.comfyui.info.system?.pytorch_version}
+          </p>
+        )}
+      </div>
 
       {/* YouTube Channels */}
       <div className="neo-card p-6 mb-6">

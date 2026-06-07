@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, JSON, Text, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, JSON, Text, ForeignKey, Boolean, Float
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database import Base
@@ -80,6 +80,10 @@ class Project(Base):
 
     # YouTube channel assignment
     youtube_channel_id = Column(Integer, ForeignKey("youtube_channels.id"), nullable=True)
+
+    # Archive
+    archive_path = Column(String, nullable=True)
+    archived_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -169,3 +173,85 @@ class Setting(Base):
     key = Column(String, unique=True, nullable=False)
     value = Column(JSON, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PromptLog(Base):
+    """One row per prompt sent to ComfyUI (one row per scene per generation).
+
+    Used by the Prompt Console to show exactly what was sent: raw LLM
+    description, sanitized description, trigger words, final prompt, LoRA,
+    seed, frame count, and ComfyUI status.
+    """
+    __tablename__ = "prompt_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    scene_index = Column(Integer, default=0)  # 0-based
+    scene_number = Column(Integer, default=1)  # 1-based (matches visual_description scene_number)
+
+    # The four stages of a prompt:
+    raw_visual_description = Column(Text, nullable=True)        # LLM output (as-is)
+    sanitized_visual_description = Column(Text, nullable=True)  # after _sanitize_visual_description
+    trigger_words = Column(String, nullable=True)              # e.g. "claymation, stop motion, clay, ..."
+    suffix = Column(String, nullable=True)                      # e.g. "25fps, high quality, vertical 9:16, ..."
+    final_prompt = Column(Text, nullable=True)                  # exact string sent to ComfyUI node 6
+
+    # LoRA / style / seed / dims
+    lora_name = Column(String, nullable=True)
+    lora_strength_model = Column(Float, nullable=True)
+    lora_strength_clip = Column(Float, nullable=True)
+    seed = Column(Integer, nullable=True)
+    width = Column(Integer, default=720)
+    height = Column(Integer, default=1280)
+    frame_count = Column(Integer, nullable=True)
+    duration_seconds = Column(Float, nullable=True)
+
+    # Lifecycle
+    status = Column(String, default="queued")  # queued, running, completed, failed
+    comfyui_prompt_id = Column(String, nullable=True, index=True)
+    error = Column(Text, nullable=True)
+    output_path = Column(String, nullable=True)
+
+    # Narration for context in the console
+    narration_text = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
+
+class ResearchLog(Base):
+    """One row per research call (web search, URL summary, topic suggestion).
+
+    Captures the exact query sent to DuckDuckGo, every result returned
+    (title, href, snippet), and the context blob fed into the LLM.
+    Mirrors the PromptLog pattern so the UI can show both the research
+    AND the prompts in the same console.
+    """
+    __tablename__ = "research_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    video_index = Column(Integer, default=0)
+    source_type = Column(String, default="auto_research")  # url, auto_research, topic
+
+    # What we asked
+    query = Column(String, nullable=True)               # e.g. "fifa world cup facts interesting"
+    topic_used = Column(String, nullable=True)          # e.g. "fifa world cup part 1"
+
+    # What came back
+    search_results = Column(JSON, nullable=True)        # [{title, href, body}, ...] from DuckDuckGo
+    context_text = Column(Text, nullable=True)          # the joined snippet blob fed to LLM
+    web_content = Column(Text, nullable=True)           # for url mode, the page body (truncated to 8000 chars)
+    result_count = Column(Integer, default=0)           # how many results
+
+    # Source URL for url mode
+    source_url = Column(String, nullable=True)
+
+    # Lifecycle
+    status = Column(String, default="completed")  # running, completed, failed
+    error = Column(Text, nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)

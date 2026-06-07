@@ -132,18 +132,18 @@ class VisualsService:
     def _resolve_lora(self, lora_name: str) -> Optional[str]:
         """Resolve a LoRA name or style to actual file path. Returns None if not found.
 
-        Returns path with BACKSLASHES (ComfyUI's required format for LoraLoader lora_name).
+        Returns path with BACKSLASHES (ComfyUI's required format for LoraLoader lora_name on Windows).
         """
         if not lora_name:
             return None
 
-        # Normalize input to forward slashes for path joining
+        # Normalize input for path joining
         lora_name_fwd = lora_name.replace("\\", "/")
 
         # Direct path check (supports subfolders like "ltx2/CozyFelt.safetensors")
         lora_path = self.lora_dir / lora_name_fwd
         if lora_path.exists():
-            # ComfyUI LoraLoader expects backslashes for subfolder paths
+            # Return with backslashes for ComfyUI compatibility on Windows
             return lora_name_fwd.replace("/", "\\")
 
         # Check if it's a style key - look up the mapped filename
@@ -153,6 +153,7 @@ class VisualsService:
             mapped_fwd = mapped_file.replace("\\", "/")
             mapped_path = self.lora_dir / mapped_fwd
             if mapped_path.exists():
+                # Return with backslashes for ComfyUI compatibility
                 return mapped_fwd.replace("/", "\\")
 
             # Try partial/fuzzy match for mapped style
@@ -161,7 +162,7 @@ class VisualsService:
             for avail in available:
                 avail_stem = Path(avail).stem.lower()
                 if lora_stem in avail_stem or avail_stem in lora_stem:
-                    return avail.replace("/", "\\")
+                    return avail
 
         # Try direct fuzzy match against available LoRAs
         available = self.get_available_loras()
@@ -169,7 +170,7 @@ class VisualsService:
         for avail in available:
             avail_stem = Path(avail).stem.lower()
             if search_term in avail_stem or avail_stem in search_term:
-                return avail.replace("/", "\\")
+                return avail
 
         return None
     
@@ -294,13 +295,23 @@ class VisualsService:
     async def generate_ai_video_t2v(self, prompt: str, seed: int = None,
                                      lora_name: str = None, lora_strength: float = 0.6,
                                      width: int = 720, height: int = 1280,
-                                     video_length: int = 65) -> Optional[bytes]:
+                                     video_length: int = 65,
+                                     log_meta: Optional[Dict] = None,
+                                     db: Optional[object] = None) -> Optional[bytes]:
         """Generate video from text using LTX 2.3 (pure t2v, 2-stage sampling, no input image).
 
         Workflow: video_t2v_ltx.json (MickMumpitz-style 2-stage: 360x640 -> 720x1280)
         - Stage 1: 9-step distilled at half resolution
         - Stage 2: 3-step refinement after 2x latent upscaling
         - LoRA chain: distilled (fixed) -> gemma abliterated (fixed) -> STYLE (injectable)
+
+        Args:
+            log_meta: Optional dict with {project_id, job_id, scene_index, scene_number,
+                raw_visual_description, sanitized_visual_description, trigger_words,
+                suffix, narration_text} for Prompt Console logging.
+            db: Optional SQLAlchemy Session. If provided AND log_meta is set, a
+                PromptLog row is created (status=queued) before sending to ComfyUI,
+                then updated to status=completed/failed once we know the result.
         """
         if not await self.comfyui.is_connected():
             print("ComfyUI not connected")
@@ -351,14 +362,122 @@ class VisualsService:
         # Serialize to JSON for queue submission
         workflow_str = json.dumps(workflow)
 
+        # Create PromptLog row BEFORE sending to ComfyUI so the console can
+        # see queued prompts in real time.
+        log_id = None
+        if db is not None and log_meta is not None:
+            try:
+                from app.models import PromptLog
+                from datetime import datetime
+                row = PromptLog(
+                    project_id=log_meta.get("project_id", 0) or 0,
+                    job_id=log_meta.get("job_id"),
+                    scene_index=log_meta.get("scene_index", 0),
+                    scene_number=log_meta.get("scene_number", 1),
+                    raw_visual_description=log_meta.get("raw_visual_description"),
+                    sanitized_visual_description=log_meta.get("sanitized_visual_description"),
+                    trigger_words=log_meta.get("trigger_words"),
+                    suffix=log_meta.get("suffix"),
+                    final_prompt=prompt,
+                    lora_name=lora_name,
+                    lora_strength_model=lora_strength,
+                    lora_strength_clip=round(lora_strength * 0.75, 3),
+                    seed=seed,
+                    width=width,
+                    height=height,
+                    frame_count=length,
+                    duration_seconds=round((length - 1) / 25.0, 2),
+                    status="running",
+                    narration_text=log_meta.get("narration_text"),
+                    created_at=datetime.utcnow(),
+                )
+                db.add(row)
+                db.commit()
+                db.refresh(row)
+                log_id = row.id
+            except Exception as e:
+                print(f"[prompt_log] Failed to create log row: {e}", flush=True)
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+
         # Queue prompt
-        prompt_id = await self.comfyui.queue_prompt(workflow)
-        if not prompt_id:
+        try:
+            prompt_id = await self.comfyui.queue_prompt(workflow)
+        except Exception as e:
+            print(f"[t2v] queue_prompt failed: {e}", flush=True)
+            if log_id is not None and db is not None:
+                try:
+                    row = db.query(type(log_meta.get("__model__", object))).__class__ if False else None
+                except Exception:
+                    pass
+                try:
+                    from app.models import PromptLog
+                    from datetime import datetime
+                    row = db.query(PromptLog).filter(PromptLog.id == log_id).first()
+                    if row:
+                        row.status = "failed"
+                        row.error = f"queue_prompt failed: {e}"
+                        row.completed_at = datetime.utcnow()
+                        db.commit()
+                except Exception:
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
             return None
+
+        if not prompt_id:
+            if log_id is not None and db is not None:
+                try:
+                    from app.models import PromptLog
+                    from datetime import datetime
+                    row = db.query(PromptLog).filter(PromptLog.id == log_id).first()
+                    if row:
+                        row.status = "failed"
+                        row.error = "queue_prompt returned no prompt_id"
+                        row.completed_at = datetime.utcnow()
+                        db.commit()
+                except Exception:
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+            return None
+
+        # Update the log row with the ComfyUI prompt_id immediately
+        if log_id is not None and db is not None:
+            try:
+                from app.models import PromptLog
+                row = db.query(PromptLog).filter(PromptLog.id == log_id).first()
+                if row:
+                    row.comfyui_prompt_id = prompt_id
+                    db.commit()
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
 
         # Wait for completion (video takes longer)
         result = await self.comfyui.wait_for_completion(prompt_id, timeout=900)
         if not result:
+            if log_id is not None and db is not None:
+                try:
+                    from app.models import PromptLog
+                    from datetime import datetime
+                    row = db.query(PromptLog).filter(PromptLog.id == log_id).first()
+                    if row:
+                        row.status = "failed"
+                        row.error = "wait_for_completion timed out or returned no result"
+                        row.completed_at = datetime.utcnow()
+                        db.commit()
+                except Exception:
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
             return None
 
         # Extract output video (SaveVideo outputs "images" with mp4 + "animated" bool)
@@ -376,13 +495,49 @@ class VisualsService:
 
                     video_bytes = await self.comfyui.get_image(filename, subfolder)
                     if video_bytes:
+                        # Mark log row as completed
+                        if log_id is not None and db is not None:
+                            try:
+                                from app.models import PromptLog
+                                from datetime import datetime
+                                row = db.query(PromptLog).filter(PromptLog.id == log_id).first()
+                                if row:
+                                    row.status = "completed"
+                                    row.output_path = f"ComfyUI/output/{subfolder}/{filename}" if subfolder else f"ComfyUI/output/{filename}"
+                                    row.completed_at = datetime.utcnow()
+                                    db.commit()
+                            except Exception:
+                                try:
+                                    db.rollback()
+                                except Exception:
+                                    pass
                         return video_bytes
+
+        # No output extracted
+        if log_id is not None and db is not None:
+            try:
+                from app.models import PromptLog
+                from datetime import datetime
+                row = db.query(PromptLog).filter(PromptLog.id == log_id).first()
+                if row:
+                    row.status = "failed"
+                    row.error = "No video output extracted from ComfyUI result"
+                    row.completed_at = datetime.utcnow()
+                    db.commit()
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
 
         return None
 
     async def generate_scene_videos(self, scenes: List[Dict], project_dir: Path,
                                       lora_name: str = None, lora_strength: float = 0.6,
+                                      style_key: str = None,
                                       project_id: int = 0, video_index: int = 0,
+                                      job_id: int = None,
+                                      db: Optional[object] = None,
                                       on_progress: callable = None,
                                       is_cancelled: callable = None) -> List[Path]:
         """Generate one t2v clip per scene, sequentially, with VRAM clearing between scenes.
@@ -394,6 +549,9 @@ class VisualsService:
             lora_strength: LoRA strength (currently ignored)
             project_id: For deterministic seed
             video_index: For deterministic seed
+            job_id: For PromptLog row linkage
+            db: Optional SQLAlchemy session. If provided, one PromptLog row is
+                created per scene and updated as ComfyUI runs.
             on_progress: Callback(scene_index, total_scenes, message) for progress updates
             is_cancelled: Optional callable returning True if the job was cancelled.
                           When set, the loop bails out between scenes so partial
@@ -423,17 +581,71 @@ class VisualsService:
             video_length = max(9, (video_length // 8) * 8 + 1)
 
             # Deterministic seed
+            # Allow a per-project offset for per-scene regeneration. If the
+            # project visual_settings includes "_regen_offset", the seed will
+            # shift so a regen produces a fresh take while staying in the same
+            # "family" (same style, similar content).
+            _regen_offset = 0
+            try:
+                from app.config import settings as _settings
+                _active = getattr(_settings, "_active_visual_settings", None)
+                if isinstance(_active, dict):
+                    _regen_offset = int(_active.get("_regen_offset", 0) or 0)
+            except Exception:
+                pass
             seed = hash((project_id, video_index, i, scene.get("visual_description", "")[:50])) & 0xFFFFFFFF
+            seed = (seed + _regen_offset) & 0xFFFFFFFF
 
-            # Enhance prompt with style guidance
-            base_prompt = scene.get("visual_description", "cinematic motion")
+            # Sanitize the visual_description: strip abstract phrases LTX 2.3 cannot
+            # render (montages, fades, calendar flips, archival effects) and force
+            # an explicit camera move if one is missing. Falls back to a static wide
+            # shot if the description is empty.
+            raw_desc = scene.get("visual_description", "") or "cinematic wide shot of an empty stadium at golden hour, no movement"
+            base_prompt = self._sanitize_visual_description(raw_desc, scene_index=i, total_scenes=len(scenes))
+
+            # Prepend style trigger words so the LoRA actually applies the intended
+            # style. Without trigger words, the LoRA's effect blends in weakly and
+            # the base prompt's content style dominates — causing inconsistent
+            # style across scenes. Trigger words are the LoRA's trained tokens
+            # (e.g., "claymation, stop motion" for the Claymation LoRA).
+            # Allow an override via _active_visual_settings (set by scheduler when
+            # doing a per-scene regen, so the log row records the same triggers).
+            trigger_prefix = ""
+            try:
+                from app.config import settings as _settings
+                _active = getattr(_settings, "_active_visual_settings", None)
+                if isinstance(_active, dict) and _active.get("_trigger_words"):
+                    trigger_prefix = f"{_active['_trigger_words']}, "
+            except Exception:
+                pass
+            if not trigger_prefix and style_key:
+                triggers = settings.STYLE_LORA_TRIGGERS.get(style_key, "")
+                if triggers:
+                    trigger_prefix = f"{triggers}, "
+
             prompt = (
-                f"{base_prompt}, smooth camera movement, 25fps, high quality, "
+                f"{trigger_prefix}{base_prompt}, 25fps, high quality, "
                 f"vertical 9:16, cinematic lighting, 720x1280 resolution"
             )
 
             if on_progress:
                 on_progress(i, len(scenes), f"Generating scene {i+1}/{len(scenes)}: {base_prompt[:50]}...")
+
+            # Build log metadata for the Prompt Console
+            suffix = "25fps, high quality, vertical 9:16, cinematic lighting, 720x1280 resolution"
+            log_meta = None
+            if db is not None:
+                log_meta = {
+                    "project_id": project_id,
+                    "job_id": job_id,
+                    "scene_index": i,
+                    "scene_number": i + 1,
+                    "raw_visual_description": raw_desc,
+                    "sanitized_visual_description": base_prompt,
+                    "trigger_words": trigger_prefix.rstrip(", ").strip() or None,
+                    "suffix": suffix,
+                    "narration_text": scene.get("narration_text") or scene.get("narration"),
+                }
 
             mp4_bytes = await self.generate_ai_video_t2v(
                 prompt=prompt,
@@ -443,6 +655,8 @@ class VisualsService:
                 width=720,
                 height=1280,
                 video_length=video_length,
+                log_meta=log_meta,
+                db=db,
             )
 
             # Cancellation check after each scene finishes (which can take minutes)
@@ -470,6 +684,136 @@ class VisualsService:
             await self.comfyui.clear_vram()
 
         return paths
+
+    def _sanitize_visual_description(self, desc: str, scene_index: int = 0, total_scenes: int = 1) -> str:
+        """Clean up a scene's visual_description for LTX 2.3 t2v.
+
+        LTX 2.3 cannot render:
+        - Montages / collages / split screens / quick cuts
+        - Calendar/clock/time-passing metaphors
+        - "Fade to black", "dissolve to", transition cues
+        - Archival black-and-white, 8mm/film-grain effects
+        - On-screen text / logos / graphics
+        - Multiple unrelated subjects in one frame
+
+        Strips those phrases, drops generic suffixes ("high quality", "8k"), and
+        prepends a slow camera move if the description doesn't already have one.
+        Also enforces a "slow" / "contemplative" final-scene closer.
+        """
+        import re
+        d = (desc or "").strip()
+        if not d:
+            d = "Cinematic wide shot of an empty stadium at golden hour, no movement"
+
+        # Strip abstract / impossible WORDS (conservatively — only the literal
+        # term, not the entire clause). This keeps the subject intact.
+        bad_words = [
+            r"\b(montage of)\b",
+            r"\b(montage)\b",
+            r"\b(collage of)\b",
+            r"\b(collage)\b",
+            r"\b(split screen)\b",
+            r"\b(quick cuts?)\b",
+            r"\b(calendar pages? flipping)\b",
+            r"\b(calendar flipping)\b",
+            r"\b(time passing)\b",
+            r"\b(decades of history)\b",
+            r"\b(fade to black)\b",
+            r"\b(dissolve to)\b",
+            r"\b(transition to)\b",
+            r"\b(immediate cut to)\b",
+            r"\b(cut to)\b",
+            r"\b(archival black and white)\b",
+            r"\b(archival)\b",
+            r"\b(black and white)\b",
+            r"\b(8mm film grain)\b",
+            r"\b(8mm)\b",
+            r"\b(film grain)\b",
+            r"\b(sepia tone)\b",
+            r"\b(sepia)\b",
+            r"\b(quick cut to)\b",
+        ]
+        for pat in bad_words:
+            d = re.sub(pat, "", d, flags=re.IGNORECASE)
+        # Drop generic quality suffixes LTX already handles via workflow
+        d = re.sub(r",?\s*(high quality|8k|4k|ultra ?realistic|hyperrealistic)[^,\.]*", "", d, flags=re.IGNORECASE)
+        d = re.sub(r",?\s*(vertical 9:?16|cinematic lighting|720x1280)[^,\.]*", "", d, flags=re.IGNORECASE)
+        # Collapse multiple commas/spaces
+        d = re.sub(r"\s*,\s*,\s*", ", ", d)
+        d = re.sub(r"\s{2,}", " ", d).strip().strip(",").strip()
+        # Clean up leftover "and"/"with" connector artifacts after stripping
+        d = re.sub(r"\s+with\s+and\s+", " ", d, flags=re.IGNORECASE)
+        d = re.sub(r"\s+and\s+and\s+", " ", d, flags=re.IGNORECASE)
+        d = re.sub(r"\s+with\s*,", ",", d, flags=re.IGNORECASE)
+        d = re.sub(r"\s+and\s*,", ",", d, flags=re.IGNORECASE)
+        d = re.sub(r"\s*,?\s*and\s*$", "", d, flags=re.IGNORECASE)
+        d = re.sub(r"\s+,", ",", d)
+        d = re.sub(r",\s*,", ",", d)
+        d = re.sub(r"\s{2,}", " ", d).strip().strip(",").strip()
+        # Trailing connector: ", with" or " with" at end
+        d = re.sub(r",?\s+with$", "", d, flags=re.IGNORECASE).strip().strip(",").strip()
+        d = re.sub(r",?\s+and$", "", d, flags=re.IGNORECASE).strip().strip(",").strip()
+        # Trailing "cinematic ," or "mood ," or "scene ,"
+        d = re.sub(r",\s*$", "", d).strip()
+        # If we stripped the whole description, fall back
+        if len(d) < 10:
+            d = "Cinematic wide shot of an empty stadium at golden hour, no movement"
+
+        # Check whether description already starts with a camera move
+        camera_moves = [
+            "slow push-in", "slow push in", "push-in", "push in",
+            "slow dolly", "dolly", "slow pan", "pan across", "pan left", "pan right",
+            "slow orbit", "orbit", "slow zoom", "zoom in", "zoom out",
+            "slow tilt", "tilt up", "tilt down",
+            "static wide", "static shot", "static close", "wide shot", "close-up", "close up",
+            "tracking shot", "slow tracking", "slow crane", "crane shot",
+            "handheld", "slow motion",
+        ]
+        d_lower = d.lower()
+        has_camera = any(d_lower.startswith(cm) or f" {cm} " in f" {d_lower} " for cm in camera_moves)
+
+        # Force a slow camera if missing
+        if not has_camera:
+            if d:
+                d = f"Slow push-in on {d[0].lower() + d[1:]}"
+            else:
+                d = "Slow push-in on the scene"
+            d = d[0].upper() + d[1:]
+
+        # Re-derive d_lower after the camera-move fix above
+        d_lower = d.lower()
+
+        # Force a "slow, contemplative" closer on the FINAL scene so the video
+        # has a deliberate ending rather than an abrupt cut. Only replace if the
+        # description doesn't already lead with a "slow" or "static" move.
+        if total_scenes > 0 and scene_index == total_scenes - 1:
+            starts_slow = (
+                d_lower.startswith("slow")
+                or d_lower.startswith("static")
+                or d_lower.startswith("contemplative")
+            )
+            if not starts_slow:
+                # Prepend a contemplative, slow camera move to set a deliberate
+                # ending pace.
+                d = f"Slow, contemplative push-in, {d[0].lower() + d[1:]}"
+                d = d[0].upper() + d[1:]
+            else:
+                # Already has a slow/static start; just inject "contemplative"
+                # into the existing slow move to reinforce the closing-shot feel.
+                if "contemplative" not in d_lower:
+                    d = re.sub(
+                        r"^(slow (?:push-?in|push in|dolly|pan|orbit|zoom|tracking|crane))",
+                        r"\1, contemplative",
+                        d,
+                        count=1,
+                        flags=re.IGNORECASE,
+                    )
+
+        # Trim to a sane length
+        if len(d) > 500:
+            d = d[:500].rsplit(",", 1)[0].strip()
+
+        return d
 
     def _make_fallback_clip(self, duration: float, width: int, height: int) -> bytes:
         """Generate a simple black clip as fallback when t2v fails."""

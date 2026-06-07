@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Settings, Clock, Loader2, Play, RefreshCw, Archive, Eye, X, Mic, Music, Sparkles, Trash2, Ban, StopCircle } from 'lucide-react';
+import { Send, Settings, Clock, Loader2, Play, RefreshCw, Archive, Eye, X, Mic, Music, Sparkles, Trash2, Ban, StopCircle, Video } from 'lucide-react';
 import api from '../api/client';
 import { VOICES, MUSIC_GENRES } from '../constants/production';
 
@@ -10,7 +10,7 @@ function formatDateTime(iso) {
     + ' · ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
 
-function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mode, onRegenScript, onRemovePlaceholder }) {
+function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mode, onRegenScript, onRemovePlaceholder, onGenerateVideo }) {
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState('');
 
@@ -162,10 +162,7 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
             <span className="text-[10px] opacity-70">#{index + 1}</span>
           </div>
           <div className="flex-1 flex flex-col items-center justify-center p-8">
-            <Loader2 className="h-10 w-10 text-[#C6F11D] animate-spin mb-4" />
-            <p className="text-xs text-[#9AA0A6] text-center">
-              Script #{index + 1} is being generated...
-            </p>
+            <Loader2 className="h-10 w-10 text-[#C6F11D] animate-spin" />
           </div>
           {onRemovePlaceholder && (
             <button
@@ -217,6 +214,15 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
           </div>
         </div>
         <div className="px-4 pb-3 flex gap-2">
+          {onGenerateVideo && (
+            <button
+              onClick={() => onGenerateVideo(video.index)}
+              className="neo-btn-primary flex items-center gap-1.5 px-3 py-1.5 text-[11px]"
+            >
+              <Video className="h-3 w-3" />
+              Generate Video
+            </button>
+          )}
           {onRegenScript && (
             <button
               onClick={() => onRegenScript(video.index)}
@@ -323,47 +329,28 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
             />
           ) : (
             <div className="absolute inset-0 flex items-center justify-center bg-[#0E1116]">
-              <div className="text-center">
-                <div className="w-16 h-16 mx-auto mb-3 rounded-2xl bg-[rgba(107,255,100,0.08)] border border-[rgba(107,255,100,0.2)] flex items-center justify-center">
-                  <Play className="h-8 w-8 text-[#6BFF64] ml-0.5" />
-                </div>
-                <p className="text-[11px] text-[#9AA0A6]">Video ready</p>
+              <div className="w-16 h-16 rounded-2xl bg-[rgba(107,255,100,0.08)] border border-[rgba(107,255,100,0.2)] flex items-center justify-center">
+                <Play className="h-8 w-8 text-[#6BFF64] ml-0.5" />
               </div>
             </div>
           )
         ) : isFailed ? (
           <div className="absolute inset-0 flex items-center justify-center bg-[#0E1116]">
-            <div className="text-center">
-              <div className="w-16 h-16 mx-auto mb-3 rounded-2xl bg-[rgba(255,87,87,0.08)] border border-[rgba(255,87,87,0.2)] flex items-center justify-center">
-                <span className="text-3xl">!</span>
-              </div>
-              <p className="text-[11px] text-[#FF5757]">Failed</p>
+            <div className="w-16 h-16 rounded-2xl bg-[rgba(255,87,87,0.08)] border border-[rgba(255,87,87,0.2)] flex items-center justify-center">
+              <span className="text-3xl text-[#FF5757]">!</span>
             </div>
           </div>
         ) : (
           <div className="absolute inset-0 flex items-center justify-center bg-[#0E1116]">
-            <div className="text-center">
-              <div className="w-16 h-16 mx-auto mb-3 rounded-2xl bg-[rgba(95,103,114,0.1)] border border-[rgba(95,103,114,0.2)] flex items-center justify-center">
-                <Clock className="h-8 w-8 text-[#5F6772]" />
-              </div>
-              <p className="text-[11px] text-[#5F6772]">Queued</p>
+            <div className="w-16 h-16 rounded-2xl bg-[rgba(95,103,114,0.1)] border border-[rgba(95,103,114,0.2)] flex items-center justify-center">
+              <Clock className="h-8 w-8 text-[#5F6772]" />
             </div>
           </div>
         )}
 
-        {isComplete && (
-          <div className="absolute bottom-2 right-2 bg-[#050608]/80 text-white text-[11px] font-medium px-1.5 py-0.5 rounded border border-[#252A33]">
-            <span className="inline-flex items-center gap-1">
-              <Play className="h-2.5 w-2.5 fill-white" />
-              0:45
-            </span>
-          </div>
-        )}
-
         {isArchived && (
-          <div className="absolute top-2 left-2 bg-[rgba(198,241,29,0.12)] text-[#C6F11D] text-[10px] font-semibold px-2 py-0.5 rounded-full border border-[rgba(198,241,29,0.3)] flex items-center gap-1">
-            <Archive className="h-3 w-3" />
-            Archived
+          <div className="absolute top-2 left-2 w-7 h-7 rounded-full bg-[rgba(198,241,29,0.2)] text-[#C6F11D] flex items-center justify-center border border-[rgba(198,241,29,0.4)]" title="Archived">
+            <Archive className="h-3.5 w-3.5" />
           </div>
         )}
       </div>

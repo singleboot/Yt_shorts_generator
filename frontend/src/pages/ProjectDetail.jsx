@@ -351,7 +351,16 @@ function ProjectDetail() {
         clearDraft(); // clear form draft now that scripts are committed
         generatingScriptsRef.current = false;
         setPage(1);
-        loadProject();
+        // Replace videos with the response data directly (avoids race with 2s poll returning stale video_count)
+        setVideoCount(res.data.video_count || 1);
+        setVideos(res.data.scripts.map(s => ({
+          index: s.index,
+          script: s,
+          upload: null,
+          job: null,
+          overrides: null,
+        })));
+        setPhase('scripts');
       }
     } catch (e) {
       if (axios.isCancel(e) || e?.code === 'ERR_CANCELED') {
@@ -393,6 +402,17 @@ function ProjectDetail() {
       }
     } catch (e) {
       showToast('Regeneration failed', 'error');
+    }
+  };
+
+  const handleGenerateSingleVideo = async (videoIndex) => {
+    try {
+      await api.post(`/projects/${id}/videos/${videoIndex}/generate`);
+      showToast(`Generating video #${videoIndex + 1}...`);
+      setPhase('videos');
+      loadProject();
+    } catch (e) {
+      showToast('Failed to start video generation', 'error');
     }
   };
 
@@ -458,6 +478,30 @@ function ProjectDetail() {
       setProject(prev => ({ ...prev, visual_settings: newVS, audio_settings: newAS }));
     } catch (e) {
       console.error('Failed to save production settings', e);
+    }
+  };
+
+  const handleSaveProject = async () => {
+    try {
+      const newVS = { ...(project.visual_settings || {}), ai_style: selectedStyle, lora_strength: loraStrength, total_duration: duration };
+      const newASRaw = { ...(project.audio_settings || {}), voice_id: selectedVoice, voice_custom: voiceCustom || undefined, music_genre: selectedMusic, music_custom: musicCustom || undefined };
+      const newAS = Object.fromEntries(Object.entries(newASRaw).filter(([, v]) => v !== undefined));
+      const newCS = { style: captionStyle, font: captionFont, font_size: captionFontSize, color: captionColor, stroke_color: captionStrokeColor, stroke_width: captionStrokeWidth, animation: captionAnimation };
+      const newSS = { ...(project.schedule_settings || {}), video_count: genCount };
+      await api.post(`/projects/${id}/save`, {
+        source_type: sourceType,
+        source_value: sourceType === 'topic' ? topic : url,
+        category,
+        visual_settings: newVS,
+        audio_settings: newAS,
+        caption_settings: newCS,
+        schedule_settings: newSS,
+        youtube_channel_id: project.youtube_channel_id,
+      });
+      showToast('Project saved!');
+      loadProject();
+    } catch (e) {
+      showToast('Failed to save project', 'error');
     }
   };
 
@@ -609,6 +653,10 @@ function ProjectDetail() {
               {phase === 'videos' ? <Video className="h-3 w-3" /> : phase === 'scripts' ? <FileText className="h-3 w-3" /> : null}
               {phase === 'setup' ? 'Setup' : phase === 'scripts' ? 'Scripts' : 'Videos'}
             </span>
+            <button onClick={handleSaveProject} className="neo-btn-primary flex items-center gap-1.5 text-sm px-3 py-1.5">
+              <CheckCircle className="h-4 w-4" />
+              Save
+            </button>
             {/* Channel selector */}
             <div className="relative">
               <button
@@ -1287,6 +1335,7 @@ function ProjectDetail() {
                 onEdit={() => setEditingVideo(video)}
                 mode={phase === 'scripts' ? 'script' : 'video'}
                 onRegenScript={phase === 'scripts' ? handleRegenScript : null}
+                onGenerateVideo={phase === 'scripts' ? handleGenerateSingleVideo : null}
                 onRemovePlaceholder={generatingScripts ? handleRemovePlaceholder : null}
               />
             ))}
@@ -1340,6 +1389,24 @@ function ProjectDetail() {
           project={project}
           onClose={() => setEditingVideo(null)}
           onSave={(overrides) => handleSaveOverrides(editingVideo.index, overrides)}
+          onSceneRegen={async (videoIndex, sceneIndex) => {
+            // Refresh project videos so the new clip is reflected
+            try {
+              const res = await api.get(`/projects/${project.id}/videos`);
+              setVideos(res.data || []);
+            } catch (e) {
+              console.error('Failed to refresh videos after scene regen:', e);
+            }
+          }}
+          onReassemble={async (videoIndex) => {
+            // Refresh project videos so the new final video is reflected
+            try {
+              const res = await api.get(`/projects/${project.id}/videos`);
+              setVideos(res.data || []);
+            } catch (e) {
+              console.error('Failed to refresh videos after reassemble:', e);
+            }
+          }}
         />
       )}
     </div>

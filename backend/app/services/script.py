@@ -100,15 +100,65 @@ class ScriptService:
         else:
             gender_note = "Consider the male voice talent when choosing tone and phrasing."
 
-        system_prompt = f"""You are an expert YouTube Shorts scriptwriter. You create scripts that are:
-- Highly engaging and hook viewers in the first 3 seconds
-- Factually accurate based on provided research
-- Optimized for {duration}-second videos
-- Split into visual scenes for AI video generation (LTX 2.3 t2v)
-- Written in a conversational, energetic tone
+        system_prompt = f"""You are an expert YouTube Shorts scriptwriter AND cinematographer. You create scripts that:
+- Hook viewers in the first 3 seconds
+- Are factually accurate based on provided research
+- Are optimized for {duration}-second vertical (9:16) videos
+- Have scenes whose visuals DIRECTLY ILLUSTRATE the spoken narration
+- Use a conversational, energetic narration tone
 - Each scene's narration must fit within 8-10 seconds of speaking time
 
-{category_instruction}"""
+{category_instruction}
+
+CRITICAL — VISUAL DESCRIPTIONS FOR LTX 2.3 T2V:
+The visual_description for each scene is fed directly into a 6-second text-to-video AI (LTX 2.3) that renders ONE short clip per scene. The model has very specific strengths and weaknesses:
+
+CAN render well:
+- A single specific subject in a specific location (e.g., "a tall cathedral in a quiet mountain village at dawn")
+- One clear action or pose (a player kicking, hands gripping a trophy, a person looking up)
+- One camera move per scene (slow push-in, slow pan, dolly forward, gentle zoom, static wide shot, slow orbit)
+- Specific lighting/mood (golden hour, overcast, floodlit, candlelit, neon-lit)
+- One clear foreground subject and a blurred background
+
+CANNOT render well — DO NOT USE:
+- "Montage", "collage", "split screen", "transition to", "cut to", "fade to black", "dissolve"
+- "Calendar flipping", "time passing", "decades of history", abstract metaphors
+- Multiple unrelated subjects in one frame (e.g., "players, fans, referees, and politicians all in one shot")
+- Photo/film/documentary effects ("archival black and white", "8mm film grain", "vintage filter") — these produce inconsistent results
+- Heavy text overlays, logos, on-screen graphics
+- People doing complex choreographed actions (dance routines, full football matches)
+
+EVERY visual_description must follow this template:
+"[Camera move] of [single specific subject] in [specific location/setting], [doing one clear action or held pose], [lighting], [mood/style], [any style LoRA triggers if relevant], high detail, cinematic, 9:16 vertical"
+
+GOOD visual_description examples:
+- "Slow push-in on a lone football player standing at the center spot of a floodlit stadium pitch at twilight, head bowed, ball at his feet, dramatic backlight, cinematic mood, 9:16 vertical, high detail"
+- "Slow orbit around an ancient leather football resting on dewy grass with morning light filtering through, shallow depth of field, warm golden tones, 9:16 vertical"
+- "Static wide shot of a roaring stadium crowd holding scarves aloft under bright floodlights, confetti mid-air, vibrant high-contrast color, cinematic 9:16 vertical"
+
+BAD visual_description examples (NEVER do this):
+- "Montage of historical football moments"  ← abstract montage
+- "Calendar pages flipping rapidly through the decades"  ← abstract metaphor
+- "Archival black and white photos showing early football"  ← effect LTX can't reproduce
+- "A player scores, fans cheer, commentators shout"  ← too many subjects/actions
+- "Dramatic zoom with cinematic fade to black"  ← fade effect impossible
+
+NARRATIVE ARC REQUIREMENTS:
+- The first scene must visually establish the HOOK of the story (the most striking image that makes viewers want to watch)
+- The middle scenes (3-8) should each introduce ONE new visual element that builds on the previous (e.g., start with empty pitch → players appear → crowd → trophy)
+- The SECOND-TO-LAST scene (scene N-1) should be the CLIMAX — the most visually dramatic moment
+- The FINAL scene (scene {num_scenes}) MUST be a deliberate CLOSING SHOT:
+  * A wide, slow, contemplative shot that visually summarizes the story
+  * A subject returning to a calm, resolved state (empty pitch, lone figure, sunset over the setting)
+  * The narration should be a reflective conclusion that matches the closing image
+  * This scene's pacing should feel like a slow exhale — slow camera, minimal motion, warm/soft light
+  * Visual example: "Slow wide shot of a single football resting on the center spot of an empty stadium at sunset, camera holds still, golden light, contemplative mood, 9:16 vertical, cinematic"
+
+VISUAL CONTINUITY:
+- Reuse 2-3 key visual anchors across scenes (e.g., the same stadium, the same ball, the same time-of-day) so the video feels like one continuous story
+- Vary the camera move per scene (push-in, pan, orbit, static, dolly) for visual rhythm
+- Keep the lighting palette consistent (don't jump from noon to night randomly)
+"""
 
         prompt = f"""Write a YouTube Shorts script about: {topic}
 Category: {category}
@@ -121,25 +171,38 @@ Research Context:
 {context}
 
 Requirements:
-1. Start with an attention-grabbing HOOK (first 3 seconds)
-2. Include EXACTLY {num_scenes} scenes, each {per_scene} seconds (total ~{duration}s)
-3. Each scene must have: scene_number, visual_description (detailed, cinematic, for LTX 2.3 t2v), narration_text (what the voiceover says, MAX 20-25 words), duration_seconds ({per_scene})
-4. Each scene's visual_description should be a complete cinematic prompt (camera angle, lighting, mood, subject, action)
-5. End with a strong call-to-action (like, subscribe, comment)
-6. Also generate: a catchy title (max 60 chars), 10 relevant hashtags, a 2-sentence description
-7. Also generate a 'music_prompt' field: a short comma-separated ACE 1.5 music description matching the "{music_label}" music genre and the script mood (genre, mood, instruments, BPM, key). Example for "Epic": "epic, cinematic, orchestral, dramatic, powerful, 100 BPM, E minor". Example for "Lofi": "lofi, chill, hip hop, relaxed, vinyl crackle, 85 BPM, A minor".
+1. HOOK: The first 3 seconds must grab attention with a striking question, surprising fact, or bold claim
+2. SCENES: Include EXACTLY {num_scenes} scenes, each {per_scene} seconds (total ~{duration}s). Each scene must have:
+   - scene_number (1 to {num_scenes})
+   - visual_description (FOLLOW THE TEMPLATE IN SYSTEM PROMPT — single subject, one action, one camera move, specific lighting; NEVER use montage/calendar/archival/etc.)
+   - narration_text (MAX 18-22 words, ~6 seconds spoken)
+   - duration_seconds ({per_scene})
+3. VISUAL CONTINUITY: Pick 2-3 recurring visual anchors (e.g., "stadium at twilight", "vintage leather ball", "lone player") and use them across multiple scenes
+4. CAMERA VARIETY: Each scene must use a DIFFERENT camera move from this set: slow push-in, slow pan, slow dolly forward, slow orbit, slow zoom, static wide, slow tilt up
+5. CLIMAX: Scene {num_scenes - 1} must be visually the most dramatic (e.g., a goal scored, a trophy lifted, a crowd erupting)
+6. CLOSING SHOT: Scene {num_scenes} MUST be a deliberate, slow, contemplative closing shot — wide, calm, warm, with minimal motion. The narration should be a reflective wrap-up, not a call-to-action. Save the call-to-action for the LAST LINE of narration_text in scene {num_scenes} (after the reflective thought).
+7. Also generate:
+   - title: catchy, max 60 chars
+   - description: 2-sentence summary
+   - hashtags: 10 relevant hashtags
+   - call_to_action: short (e.g., "Like and subscribe for more!")
+   - music_prompt: comma-separated ACE 1.5 music description (genre, mood, instruments, BPM, key). Example for "Epic": "epic, cinematic, orchestral, dramatic, powerful, 100 BPM, E minor"
 
-Respond ONLY in valid JSON format like this:
+Respond ONLY in valid JSON. No markdown, no commentary, no code blocks — just raw JSON:
+
 {{
   "title": "...",
   "description": "...",
   "hashtags": ["#tag1", "#tag2", ...],
   "hook": "...",
   "scenes": [
-    {{"scene_number": 1, "visual_description": "Cinematic shot of ...", "narration_text": "...", "duration_seconds": {per_scene}}},
+    {{"scene_number": 1, "visual_description": "Slow push-in on ...", "narration_text": "...", "duration_seconds": {per_scene}}},
+    {{"scene_number": 2, "visual_description": "Slow pan across ...", "narration_text": "...", "duration_seconds": {per_scene}}},
     ...
+    {{"scene_number": {num_scenes - 1}, "visual_description": "Fast push-in on the climactic moment ...", "narration_text": "...", "duration_seconds": {per_scene}}},
+    {{"scene_number": {num_scenes}, "visual_description": "Slow wide shot of ... contemplative closing image", "narration_text": "Reflective conclusion. Like and subscribe for more!", "duration_seconds": {per_scene}}}
   ],
-  "call_to_action": "...",
+  "call_to_action": "Like and subscribe for more!",
   "music_prompt": "genre, mood, instruments, BPM, key"
 }}"""
 

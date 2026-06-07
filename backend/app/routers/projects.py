@@ -1,12 +1,22 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, timedelta
 from app.database import get_db
 from app import models
 from app.services.scheduler import scheduler_service
+from app.config import settings
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+class GenerateScriptsRequest(BaseModel):
+    video_count: int = None
+    duration: int = None
+    source_type: str = None
+    category: str = None
+    topic: str = None
+    url: str = None
 
 @router.get("/", response_model=list)
 def list_projects(db: Session = Depends(get_db)):
@@ -54,13 +64,90 @@ def update_project(project_id: int, project_data: dict, db: Session = Depends(ge
     return _project_to_dict(project)
 
 @router.delete("/{project_id}", response_model=dict)
-def delete_project(project_id: int, db: Session = Depends(get_db)):
+def delete_project(project_id: int, action: str = "delete", db: Session = Depends(get_db)):
+    from app.config import settings
+    from pathlib import Path
+    import shutil, zipfile
+    from datetime import datetime
+
     project = db.query(models.Project).filter(models.Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    project_dir = settings.PROJECTS_DIR / str(project.id)
+
+    if action == "archive":
+        archives_dir = settings.STORAGE_DIR / "archives"
+        archives_dir.mkdir(parents=True, exist_ok=True)
+
+        safe_name = "".join(c if c.isalnum() or c in " _-" else "_" for c in project.name)
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        zip_path = archives_dir / f"{safe_name}_{project.id}_{timestamp}.zip"
+
+        if project_dir.exists():
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for file_path in project_dir.rglob("*"):
+                    if file_path.is_file():
+                        arcname = file_path.relative_to(project_dir.parent)
+                        zf.write(file_path, arcname)
+            shutil.rmtree(project_dir)
+
+        project.status = "archived"
+        project.archive_path = str(zip_path)
+        project.archived_at = datetime.utcnow()
+        db.commit()
+
+        return {"status": "archived", "message": f"Project archived to {zip_path.name}"}
+
+    # Permanent delete
+    if project_dir.exists():
+        shutil.rmtree(project_dir)
     db.delete(project)
     db.commit()
+
+    archive_path = Path(project.archive_path) if project.archive_path else None
+    if archive_path and archive_path.exists():
+        try:
+            archive_path.unlink()
+        except Exception:
+            pass
+
     return {"status": "deleted"}
+
+@router.post("/{project_id}/restore", response_model=dict)
+def restore_project(project_id: int, db: Session = Depends(get_db)):
+    from app.config import settings
+    from pathlib import Path
+    import zipfile, shutil
+
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if project.status != "archived" or not project.archive_path:
+        raise HTTPException(status_code=400, detail="Project is not archived")
+
+    zip_path = Path(project.archive_path)
+    if not zip_path.exists():
+        raise HTTPException(status_code=404, detail="Archive file not found")
+
+    project_dir = settings.PROJECTS_DIR / str(project.id)
+    if project_dir.exists():
+        shutil.rmtree(project_dir)
+
+    with zipfile.ZipFile(zip_path, 'r') as zf:
+        zf.extractall(project_dir.parent)
+
+    project.status = "active"
+    project.archive_path = None
+    project.archived_at = None
+    db.commit()
+
+    try:
+        zip_path.unlink()
+    except Exception:
+        pass
+
+    return {"status": "restored", "message": "Project restored"}
 
 @router.post("/{project_id}/batch", response_model=dict)
 def trigger_batch(project_id: int, body: dict = {}, db: Session = Depends(get_db)):
@@ -102,6 +189,36 @@ def trigger_batch(project_id: int, body: dict = {}, db: Session = Depends(get_db
     db.commit()
     return scheduler_service.trigger_batch_now(project_id)
 
+@router.post("/{project_id}/save", response_model=dict)
+def save_project(project_id: int, body: dict, db: Session = Depends(get_db)):
+    """Save project settings and create folder structure on disk."""
+    from app.config import settings
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    for key in ("source_type", "source_value", "category", "subcategory"):
+        if key in body:
+            setattr(project, key, body[key])
+    if "visual_settings" in body:
+        project.visual_settings = body["visual_settings"]
+    if "audio_settings" in body:
+        project.audio_settings = body["audio_settings"]
+    if "caption_settings" in body:
+        project.caption_settings = body["caption_settings"]
+    if "schedule_settings" in body:
+        project.schedule_settings = body["schedule_settings"]
+    if "youtube_channel_id" in body:
+        project.youtube_channel_id = body["youtube_channel_id"]
+
+    db.commit()
+
+    base = settings.PROJECTS_DIR / str(project.id)
+    for sub in ("scripts", "videos", "audio", "final", "thumbnails"):
+        (base / sub).mkdir(parents=True, exist_ok=True)
+
+    return {"status": "success", "message": "Project saved"}
+
 @router.post("/{project_id}/post", response_model=dict)
 def post_project(project_id: int, db: Session = Depends(get_db)):
     """Schedule all queued uploads for this project using global settings."""
@@ -126,11 +243,11 @@ def list_project_videos(project_id: int, db: Session = Depends(get_db)):
     if isinstance(schedule_settings, dict):
         pending_overrides = schedule_settings.get("pending_overrides", {})
     
-    scripts = db.query(models.Script).filter(models.Script.project_id == project_id).order_by(models.Script.video_index).all()
+    scripts = db.query(models.Script).filter(models.Script.project_id == project_id).order_by(models.Script.video_index, models.Script.id.desc()).all()
     uploads = db.query(models.Upload).filter(models.Upload.project_id == project_id).all()
     jobs = db.query(models.Job).filter(models.Job.project_id == project_id, models.Job.job_type == "video").order_by(models.Job.created_at.desc()).all()
     
-    # Map uploads and jobs to scripts
+    # Map uploads to script ids
     upload_by_script = {u.script_id: u for u in uploads}
     job_by_index = {}
     for j in jobs:
@@ -142,8 +259,28 @@ def list_project_videos(project_id: int, db: Session = Depends(get_db)):
             pass
     
     videos = []
-    for i in range(video_count):
-        script = next((s for s in scripts if s.video_index == i), None)
+    # Display range = max(video_count, max index with a script or job) so cards
+    # generated past video_count are still visible.
+    all_indices = {i for i in range(video_count)}
+    for s in scripts:
+        all_indices.add(s.video_index)
+    for j in jobs:
+        try:
+            all_indices.add(int(j.logs.split("/")[0].replace("Video ", "")) - 1)
+        except:
+            pass
+    for i in sorted(all_indices):
+        # Pick the newest script per index that has an upload; fall back to newest overall
+        idx_scripts = [s for s in scripts if s.video_index == i]
+        script = None
+        if idx_scripts:
+            # Prefer script with upload, else take the newest (first since sorted id.desc)
+            for s in idx_scripts:
+                if s.id in upload_by_script:
+                    script = s
+                    break
+            if not script:
+                script = idx_scripts[0]
         upload = upload_by_script.get(script.id) if script else None
         job = job_by_index.get(i)
         
@@ -163,6 +300,7 @@ def list_project_videos(project_id: int, db: Session = Depends(get_db)):
         video_url = None
         if upload and upload.video_path:
             from pathlib import Path
+            from app.config import settings
             video_path = Path(upload.video_path).resolve()
             storage = Path(settings.STORAGE_DIR).resolve()
             try:
@@ -304,39 +442,39 @@ def update_video_settings(project_id: int, video_index: int, data: dict, db: Ses
     return scheduler_service.regenerate_video(project_id, video_index, overrides)
 
 @router.post("/suggest-topics", response_model=dict)
-def suggest_topics(body: dict = {}):
+def suggest_topics(body: dict = {}, db: Session = Depends(get_db)):
     """Generate topic ideas for a category using Ollama."""
     import asyncio as _aio
     from app.services.research import research_service
     category = body.get("category", "tech")
     seed = body.get("seed", "")
+    project_id = body.get("project_id", 0)
     try:
-        loop = _aio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                topics = pool.submit(_aio.run, research_service.suggest_topics(category, seed)).result()
-        else:
-            topics = loop.run_until_complete(research_service.suggest_topics(category, seed))
-    except RuntimeError:
+        topics = _aio.run(research_service.suggest_topics(
+            category=category,
+            seed=seed,
+            project_id=project_id,
+        ))
+    except Exception:
         topics = _aio.run(research_service.suggest_topics(category, seed))
     return {"status": "success", "topics": topics}
 
 @router.post("/trending-topics", response_model=dict)
-def trending_topics(body: dict = {}):
+def trending_topics(body: dict = {}, db: Session = Depends(get_db)):
     """Search web for trending topics in a category."""
     import asyncio as _aio
     from app.services.research import research_service
     category = body.get("category", "tech")
+    project_id = body.get("project_id", 0)
+    # Run the async coroutine. asyncio.run is the cleanest entry point and
+    # works correctly with thread-locals (the service opens its own session
+    # to avoid SQLAlchemy session-in-thread issues).
     try:
-        loop = _aio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                topics = pool.submit(_aio.run, research_service.trending_topics(category)).result()
-        else:
-            topics = loop.run_until_complete(research_service.trending_topics(category))
-    except RuntimeError:
+        topics = _aio.run(research_service.trending_topics(
+            category=category,
+            project_id=project_id,
+        ))
+    except Exception:
         topics = _aio.run(research_service.trending_topics(category))
     return {"status": "success", "topics": topics}
 
@@ -366,9 +504,14 @@ def trending_now(project_id: int, body: dict = {}, db: Session = Depends(get_db)
         except RuntimeError:
             return _aio.run(coro)
 
-    trending = run_async(research_service.trending_topics(category))
+    # Don't pass db: the asyncio coroutine runs in a worker thread and a
+    # SQLAlchemy session is not safe to share across threads. The service
+    # opens its own session.
+    trending = run_async(research_service.trending_topics(category, project_id=project_id))
     if not trending:
-        trending = run_async(research_service.suggest_topics(category, "trending viral topics right now"))
+        trending = run_async(research_service.suggest_topics(
+            category, "trending viral topics right now", project_id=project_id
+        ))
     if not trending:
         return {"status": "error", "message": "Could not find trending topics"}
 
@@ -497,7 +640,7 @@ def archive_project(project_id: int, db: Session = Depends(get_db)):
     return {"status": "success", "archived": count}
 
 @router.post("/{project_id}/generate-scripts", response_model=dict)
-def generate_scripts(project_id: int, body: dict = {}, db: Session = Depends(get_db)):
+def generate_scripts(project_id: int, body: GenerateScriptsRequest = Body(GenerateScriptsRequest()), db: Session = Depends(get_db)):
     """Generate ONLY scripts (no t2v) for a batch. Synchronous — all Ollama calls."""
     import json as _json
     import asyncio as _aio
@@ -508,17 +651,17 @@ def generate_scripts(project_id: int, body: dict = {}, db: Session = Depends(get
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    if body.get("category"):
-        project.category = body["category"]
-    if body.get("topic"):
-        project.source_value = body["topic"]
+    if body.category:
+        project.category = body.category
+    if body.topic:
+        project.source_value = body.topic
         project.source_type = "auto_research"
-    if body.get("url"):
-        project.source_value = body["url"]
+    if body.url:
+        project.source_value = body.url
         project.source_type = "url"
-    if body.get("source_type"):
-        project.source_type = body["source_type"]
-    if body.get("duration"):
+    if body.source_type:
+        project.source_type = body.source_type
+    if body.duration:
         vs = project.visual_settings
         if isinstance(vs, str):
             vs = _json.loads(vs) if vs else {}
@@ -526,9 +669,9 @@ def generate_scripts(project_id: int, body: dict = {}, db: Session = Depends(get
             vs = {}
         elif isinstance(vs, dict):
             vs = dict(vs)
-        vs["total_duration"] = body["duration"]
+        vs["total_duration"] = body.duration
         project.visual_settings = vs
-    if body.get("video_count"):
+    if body.video_count:
         ss = project.schedule_settings
         if isinstance(ss, str):
             ss = _json.loads(ss) if ss else {}
@@ -536,7 +679,7 @@ def generate_scripts(project_id: int, body: dict = {}, db: Session = Depends(get
             ss = {}
         elif isinstance(ss, dict):
             ss = dict(ss)
-        ss["video_count"] = body["video_count"]
+        ss["video_count"] = body.video_count
         project.schedule_settings = ss
     db.commit()
 
@@ -682,7 +825,9 @@ def regenerate_script(project_id: int, video_index: int, db: Session = Depends(g
     elif not isinstance(audio_settings, dict):
         audio_settings = {}
     voice_id = audio_settings.get("voice_id", "en-US-AriaNeural")
+    voice_custom = audio_settings.get("voice_custom", "")
     music_genre = audio_settings.get("music_genre", "ambient")
+    music_custom = audio_settings.get("music_custom", "")
 
     def run_async(coro):
         try:
@@ -761,6 +906,64 @@ def regenerate_script(project_id: int, video_index: int, db: Session = Depends(g
         }
     }
 
+@router.post("/{project_id}/videos/{video_index}/generate", response_model=dict)
+def generate_single_video(project_id: int, video_index: int, db: Session = Depends(get_db)):
+    """Generate a single video for a specific script index.
+
+    Deletes any existing script + assets for this index first (just like regenerate-script),
+    then creates a queued job. The scheduler will generate a fresh script and run the full
+    t2v pipeline.
+    """
+    import json as _json
+    from datetime import datetime, timedelta
+
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Delete existing script + assets for this video_index (avoids duplicates)
+    existing = db.query(models.Script).filter(
+        models.Script.project_id == project_id,
+        models.Script.video_index == video_index
+    ).first()
+    if existing:
+        db.query(models.Asset).filter(models.Asset.script_id == existing.id).delete()
+        db.delete(existing)
+        db.commit()
+
+    # Clear stale batch/generate jobs for this project to prevent extra processing
+    db.query(models.Job).filter(
+        models.Job.project_id == project_id,
+        models.Job.job_type.in_(["batch", "generate"]),
+        models.Job.status == "queued"
+    ).delete()
+    db.commit()
+
+    schedule_settings = _json.loads(project.schedule_settings) if isinstance(project.schedule_settings, str) else project.schedule_settings
+    video_count = schedule_settings.get("video_count", 1) if isinstance(schedule_settings, dict) else 1
+
+    job = models.Job(
+        project_id=project_id,
+        job_type="video",
+        status="queued",
+        logs=f"Video {video_index + 1}/{video_count}",
+        progress=0
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    scheduler_service.scheduler.add_job(
+        scheduler_service._run_single_video_job_by_id,
+        "date",
+        run_date=datetime.now() + timedelta(seconds=2),
+        args=[job.id],
+        id=f"single_video_{project_id}_{video_index}",
+        replace_existing=True
+    )
+
+    return {"status": "success", "job_id": job.id, "video_index": video_index}
+
 @router.get("/{project_id}/scripts", response_model=list)
 def list_project_scripts(project_id: int, db: Session = Depends(get_db)):
     scripts = db.query(models.Script).filter(models.Script.project_id == project_id).all()
@@ -814,6 +1017,104 @@ def list_project_uploads(project_id: int, db: Session = Depends(get_db)):
         for u in uploads
     ]
 
+
+@router.post("/{project_id}/videos/{video_index}/scenes/{scene_index}/regenerate", response_model=dict)
+def regenerate_scene(project_id: int, video_index: int, scene_index: int,
+                       seed_offset: int = 1,
+                       db: Session = Depends(get_db)):
+    """Regenerate ONE scene without running the rest of the pipeline.
+
+    Re-runs ComfyUI t2v for that one scene with a new seed (deterministic
+    offset from the original), overwrites videos/{idx}/scene_{NN:02d}.mp4,
+    and updates the Asset row. Does NOT touch voiceover, music, or assembly.
+    After regenerating, call /reassemble to rebuild the final video.
+
+    Args:
+        project_id: Project ID
+        video_index: 0-based video index
+        scene_index: 0-based scene index
+        seed_offset: How much to shift the seed from the original (default 1).
+                     Increase to get a more different take.
+    """
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    result = scheduler_service.regenerate_single_scene(
+        project_id=project_id,
+        video_index=video_index,
+        scene_index=scene_index,
+        seed_offset=seed_offset,
+    )
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("message", "Regeneration failed"))
+    return result
+
+
+@router.post("/{project_id}/videos/{video_index}/reassemble", response_model=dict)
+def reassemble_final_video(project_id: int, video_index: int,
+                            db: Session = Depends(get_db)):
+    """Re-run only the assembly step to rebuild the final video.
+
+    Uses the existing scene_NN.mp4 files in videos/{idx}/ and existing
+    audio assets. Does NOT regenerate t2v, voice, or music. Use after
+    per-scene regeneration to incorporate new clips into the final mp4.
+    """
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    result = scheduler_service.reassemble_video(
+        project_id=project_id,
+        video_index=video_index,
+    )
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("message", "Reassembly failed"))
+    return result
+
+
+@router.get("/{project_id}/videos/{video_index}/scenes", response_model=list)
+def list_video_scenes(project_id: int, video_index: int,
+                       db: Session = Depends(get_db)):
+    """List all scenes for a video with file existence info.
+
+    Used by the EditVideoModal Scenes tab to show per-scene regenerate UI.
+    Returns one row per scene with: scene_index, scene_number, has_clip,
+    clip_path, narration preview, and regen status.
+    """
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    script = db.query(models.Script).filter(
+        models.Script.project_id == project_id,
+        models.Script.video_index == video_index,
+    ).order_by(models.Script.created_at.desc()).first()
+    if not script:
+        return []
+
+    # Scenes are stored in the dedicated JSON column
+    scenes = script.scenes or []
+
+    base_dir = settings.PROJECTS_DIR / str(project_id)
+    videos_dir = base_dir / "videos" / str(video_index)
+
+    out = []
+    for i, scene in enumerate(scenes):
+        clip = videos_dir / f"scene_{i+1:02d}.mp4"
+        narration = (scene.get("narration_text") or scene.get("narration") or "") if isinstance(scene, dict) else ""
+        visual_desc = (scene.get("visual_description") or "") if isinstance(scene, dict) else ""
+        out.append({
+            "scene_index": i,
+            "scene_number": i + 1,
+            "has_clip": clip.exists(),
+            "clip_path": str(clip) if clip.exists() else None,
+            "narration": narration[:140] + ("..." if len(narration) > 140 else ""),
+            "visual_description": visual_desc[:200] + ("..." if len(visual_desc) > 200 else ""),
+            "duration_seconds": scene.get("duration_seconds", 8) if isinstance(scene, dict) else 8,
+        })
+    return out
+
 def _project_to_dict(project):
     import json as _json
     def _parse(val):
@@ -841,6 +1142,8 @@ def _project_to_dict(project):
         "schedule_settings": _parse(project.schedule_settings),
         "seo_settings": _parse(project.seo_settings),
         "youtube_channel_id": project.youtube_channel_id,
+        "archive_path": project.archive_path,
+        "archived_at": project.archived_at.isoformat() if project.archived_at else None,
         "youtube_channel": {
             "id": channel.id,
             "name": channel.name,
