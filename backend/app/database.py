@@ -33,6 +33,54 @@ def init_db():
     """Create tables and apply incremental migrations for missing columns/tables."""
     Base.metadata.create_all(bind=engine)
     _run_migrations()
+    _reconcile_video_counts()
+
+
+def _reconcile_video_counts():
+    """Reconcile projects.schedule_settings.video_count with the actual content.
+
+    schedule_settings.video_count is a *write target* (it gets bumped when the
+    user adds new videos or starts a batch). It must NOT be used as a source of
+    truth for the video list - the list endpoint derives it from len(videos)
+    instead. This migration only cleans up the stored value so that any code
+    that still reads it (e.g. legacy frontends) doesn't show phantom slots.
+    """
+    import json
+    from sqlalchemy import inspect
+    with engine.connect() as conn:
+        try:
+            rows = conn.execute(text("SELECT id, schedule_settings FROM projects")).fetchall()
+        except Exception:
+            return
+        for row in rows:
+            pid, ss_raw = row[0], row[1]
+            try:
+                ss = json.loads(ss_raw) if isinstance(ss_raw, str) and ss_raw else (ss_raw or {})
+            except Exception:
+                continue
+            if not isinstance(ss, dict):
+                continue
+            try:
+                max_idx = conn.execute(
+                    text("SELECT MAX(video_index) FROM scripts WHERE project_id = :pid"),
+                    {"pid": pid},
+                ).scalar()
+            except Exception:
+                max_idx = None
+            # video_count is the count of video slots = max_idx + 1 if any
+            # scripts exist, else 0
+            actual = (max_idx + 1) if max_idx is not None and max_idx >= 0 else 0
+            stored = ss.get("video_count", 0)
+            if stored != actual:
+                ss["video_count"] = actual
+                conn.execute(
+                    text("UPDATE projects SET schedule_settings = :ss WHERE id = :pid"),
+                    {"ss": json.dumps(ss), "pid": pid},
+                )
+        try:
+            conn.commit()
+        except Exception:
+            pass
 
 
 def _run_migrations():
