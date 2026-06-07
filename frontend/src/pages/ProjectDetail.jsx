@@ -1390,19 +1390,39 @@ function ProjectDetail() {
           onClose={() => setEditingVideo(null)}
           onSave={(overrides) => handleSaveOverrides(editingVideo.index, overrides)}
           onSceneRegen={async (videoIndex, sceneIndex) => {
-            // Refresh project videos so the new clip is reflected
+            // Refresh project videos so the new clip is reflected.
+            // The endpoint returns {status, videos, video_count} so we
+            // MUST pull out .videos — passing the wrapper object crashes
+            // every videos.some/filter/length call on the next render
+            // and unmounts the page.
             try {
               const res = await api.get(`/projects/${project.id}/videos`);
-              setVideos(res.data || []);
+              const payload = res.data || {};
+              if (Array.isArray(payload.videos)) {
+                setVideos(payload.videos);
+                if (typeof payload.video_count === 'number') {
+                  setVideoCount(payload.video_count);
+                }
+              } else if (Array.isArray(payload)) {
+                setVideos(payload);
+              }
             } catch (e) {
               console.error('Failed to refresh videos after scene regen:', e);
             }
           }}
           onReassemble={async (videoIndex) => {
-            // Refresh project videos so the new final video is reflected
+            // Same wrapper-object trap as onSceneRegen — see comment above.
             try {
               const res = await api.get(`/projects/${project.id}/videos`);
-              setVideos(res.data || []);
+              const payload = res.data || {};
+              if (Array.isArray(payload.videos)) {
+                setVideos(payload.videos);
+                if (typeof payload.video_count === 'number') {
+                  setVideoCount(payload.video_count);
+                }
+              } else if (Array.isArray(payload)) {
+                setVideos(payload);
+              }
             } catch (e) {
               console.error('Failed to refresh videos after reassemble:', e);
             }
