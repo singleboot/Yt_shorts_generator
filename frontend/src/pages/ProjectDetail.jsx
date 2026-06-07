@@ -378,6 +378,7 @@ function ProjectDetail() {
     const placeholders = Array.from({ length: genCount }, (_, i) => ({
       index: maxIdx + 1 + i,
       generating: true,
+      generatingDuration: duration,
       script: null, upload: null, job: null, overrides: null,
     }));
     setVideos(prev => [...prev, ...placeholders]);
@@ -1545,6 +1546,21 @@ function ProjectDetail() {
               <Archive className="h-3 w-3" />
               Archive
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Waiting banner while scripts are being generated */}
+      {generatingScripts && (
+        <div className="mb-4 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-3">
+          <Loader2 className="h-4 w-4 text-amber-400 animate-spin shrink-0" />
+          <div className="text-xs">
+            <span className="text-amber-300 font-semibold">Generating scripts…</span>
+            <span className="text-amber-200/60 ml-2">
+              This takes 2–5 min for standard videos, longer for 180s/300s.
+              The script card will appear here automatically — then click it to review
+              and click <span className="text-amber-300 font-semibold">Generate Video</span> to start rendering.
+            </span>
           </div>
         </div>
       )}

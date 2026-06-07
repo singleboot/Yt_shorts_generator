@@ -29,7 +29,7 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
     }
   };
 
-  const { index, script, upload, job, overrides } = video;
+  const { index, script, upload, job, overrides, generatingDuration } = video;
   const isRunning = job?.status === 'running';
   const isComplete = job?.status === 'completed';
   const isFailed = job?.status === 'failed';
@@ -161,8 +161,14 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
             </span>
             <span className="text-[10px] opacity-70">#{index + 1}</span>
           </div>
-          <div className="flex-1 flex flex-col items-center justify-center p-8">
+          <div className="flex-1 flex flex-col items-center justify-center p-8 gap-3">
             <Loader2 className="h-10 w-10 text-[#C6F11D] animate-spin" />
+            {generatingDuration && (
+              <div className="text-center">
+                <div className="text-[11px] text-[#C6F11D] font-semibold">{generatingDuration}s video</div>
+                <div className="text-[10px] text-[#5F6772] mt-0.5">~{Math.ceil(generatingDuration / 60 * 2)}–{Math.ceil(generatingDuration / 60 * 4)} min</div>
+              </div>
+            )}
           </div>
           {onRemovePlaceholder && (
             <button
