@@ -180,7 +180,18 @@ Requirements:
 3. VISUAL CONTINUITY: Pick 2-3 recurring visual anchors (e.g., "stadium at twilight", "vintage leather ball", "lone player") and use them across multiple scenes
 4. CAMERA VARIETY: Each scene must use a DIFFERENT camera move from this set: slow push-in, slow pan, slow dolly forward, slow orbit, slow zoom, static wide, slow tilt up
 5. CLIMAX: Scene {num_scenes - 1} must be visually the most dramatic (e.g., a goal scored, a trophy lifted, a crowd erupting)
-6. CLOSING SHOT: Scene {num_scenes} MUST be a deliberate, slow, contemplative closing shot — wide, calm, warm, with minimal motion. The narration should be a reflective wrap-up, not a call-to-action. Save the call-to-action for the LAST LINE of narration_text in scene {num_scenes} (after the reflective thought).
+6. CLOSING SHOT + CTA: Scene {num_scenes} is the final scene and MUST combine TWO things in ONE narration_text of 22-30 words:
+   - A short reflective wrap-up (1-2 sentences) about the story/topic
+   - A clear, explicit call-to-action at the end that:
+     * Mentions the channel niche (e.g., "for more legendary sports history", "for more untold stories", "for the next chapter in history")
+     * Names specific actions: "Like", "Subscribe", AND "hit the bell" (all three)
+     * Sounds natural spoken aloud (not a marketing tagline)
+   - Examples of GOOD final scene narration_text (must be 22-30 words, fits ~6-7s spoken):
+     * "From a humble pitch in Uruguay to a global phenomenon watched by billions. Like, subscribe, and hit the bell for more legendary sports history."
+     * "And so the World Cup's greatest story is far from over. Like this video, subscribe to our channel, and hit the bell so you never miss a chapter."
+     * "The story of [topic] shows us how far humanity can go. Like, subscribe, and hit the bell for more incredible stories from history."
+   - The visual should still be a deliberate, slow, contemplative closing shot (trophy, lone object, empty stadium, wide sunset) — the CTA is spoken, not displayed
+   - NEVER end the script abruptly. The final narration_text MUST end with a CTA sentence that contains the words "Like", "Subscribe", and "bell" (or "notification").
 7. Also generate:
    - title: catchy, max 60 chars
    - description: 2-sentence summary
@@ -207,7 +218,7 @@ Respond ONLY in valid JSON. No markdown, no commentary, no code blocks — just 
 }}"""
 
         response = await research_service._ollama_generate(prompt, system_prompt)
-        
+
         # Try to parse JSON from response
         try:
             # Sometimes LLM wraps in markdown code blocks
@@ -215,12 +226,75 @@ Respond ONLY in valid JSON. No markdown, no commentary, no code blocks — just 
                 response = response.split("```json")[1].split("```")[0].strip()
             elif "```" in response:
                 response = response.split("```")[1].split("```")[0].strip()
-            
+
             script_data = json.loads(response)
+            # ENFORCE: explicit CTA at end of last scene's narration.
+            # Many LLMs end the script abruptly after the reflective wrap-up
+            # and forget the call-to-action. We append/strengthen it here so
+            # the user always hears a clear Like/Subscribe/bell sign-off.
+            script_data = self._enforce_final_cta(script_data, topic=topic, category=category)
             return script_data
         except json.JSONDecodeError:
             # Fallback: return raw text structured manually
             return self._fallback_parse_script(response, topic)
+
+    def _enforce_final_cta(self, script_data: Dict, topic: str, category: str) -> Dict:
+        """Guarantee the last scene's narration_text ends with an explicit
+        Like / Subscribe / bell call-to-action.
+
+        If the LLM already included all three keywords, we leave the text
+        alone. Otherwise we append a channel-niche-specific CTA so the script
+        never ends abruptly.
+        """
+        scenes = script_data.get("scenes") or []
+        if not scenes:
+            return script_data
+
+        last = scenes[-1]
+        if not isinstance(last, dict):
+            return script_data
+
+        narration = (last.get("narration_text") or "").strip()
+        if not narration:
+            return script_data
+
+        text_lower = narration.lower()
+        has_like = ("like" in text_lower)
+        has_subscribe = ("subscribe" in text_lower)
+        has_bell = ("bell" in text_lower or "notification" in text_lower)
+
+        if has_like and has_subscribe and has_bell:
+            return script_data  # LLM did it right
+
+        # Build a channel-niche phrase based on the topic/category.
+        topic_short = (topic or "more stories").strip()
+        if not topic_short:
+            topic_short = "more stories"
+        # Truncate topic to a friendly phrase
+        if len(topic_short) > 50:
+            topic_short = topic_short[:47] + "..."
+
+        if category.lower() in ("history", "sports", "tech", "science", "geography"):
+            niche_phrase = f"for more {category} stories like this"
+        else:
+            niche_phrase = f"for more {topic_short} content"
+
+        cta = f"Like, subscribe, and hit the bell {niche_phrase}."
+
+        if has_like and has_subscribe:
+            # missing bell
+            narration = f"{narration.rstrip('.! ')}. {cta}"
+        elif has_like and has_bell:
+            # missing subscribe
+            narration = f"{narration.rstrip('.! ')}. Subscribe and hit the bell {niche_phrase}."
+        else:
+            # missing all/none — append full CTA
+            narration = f"{narration.rstrip('.! ')}. {cta}"
+
+        last["narration_text"] = narration
+        scenes[-1] = last
+        script_data["scenes"] = scenes
+        return script_data
     
     async def split_script_into_scenes(self, script_text: str) -> List[Dict]:
         """Split an existing script into scenes."""

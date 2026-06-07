@@ -1021,6 +1021,7 @@ def list_project_uploads(project_id: int, db: Session = Depends(get_db)):
 @router.post("/{project_id}/videos/{video_index}/scenes/{scene_index}/regenerate", response_model=dict)
 def regenerate_scene(project_id: int, video_index: int, scene_index: int,
                        seed_offset: int = 1,
+                       custom_prompt: str = None,
                        db: Session = Depends(get_db)):
     """Regenerate ONE scene without running the rest of the pipeline.
 
@@ -1035,6 +1036,11 @@ def regenerate_scene(project_id: int, video_index: int, scene_index: int,
         scene_index: 0-based scene index
         seed_offset: How much to shift the seed from the original (default 1).
                      Increase to get a more different take.
+        custom_prompt: Optional user-tweaked visual description. When
+                       provided, replaces the script's visual_description
+                       for this scene. Trigger words + suffix are still
+                       applied automatically. The script itself is NOT
+                       updated — this is a one-shot override.
     """
     project = db.query(models.Project).filter(models.Project.id == project_id).first()
     if not project:
@@ -1045,6 +1051,7 @@ def regenerate_scene(project_id: int, video_index: int, scene_index: int,
         video_index=video_index,
         scene_index=scene_index,
         seed_offset=seed_offset,
+        custom_prompt=custom_prompt,
     )
     if result.get("status") == "error":
         raise HTTPException(status_code=400, detail=result.get("message", "Regeneration failed"))
@@ -1076,11 +1083,14 @@ def reassemble_final_video(project_id: int, video_index: int,
 @router.get("/{project_id}/videos/{video_index}/scenes", response_model=list)
 def list_video_scenes(project_id: int, video_index: int,
                        db: Session = Depends(get_db)):
-    """List all scenes for a video with file existence info.
+    """List all scenes for a video with file existence info + prompt details.
 
-    Used by the EditVideoModal Scenes tab to show per-scene regenerate UI.
-    Returns one row per scene with: scene_index, scene_number, has_clip,
-    clip_path, narration preview, and regen status.
+    Used by the EditVideoModal Scenes tab to show per-scene regenerate UI
+    AND a prompt editor where the user can tweak the visual description
+    before regenerating. Returns one row per scene with: scene_index,
+    scene_number, has_clip, clip_path, full narration text, full
+    visual_description, the last `final_prompt` that was sent to ComfyUI
+    (for context), trigger_words, lora_name, and regen status.
     """
     project = db.query(models.Project).filter(models.Project.id == project_id).first()
     if not project:
@@ -1099,19 +1109,44 @@ def list_video_scenes(project_id: int, video_index: int,
     base_dir = settings.PROJECTS_DIR / str(project_id)
     videos_dir = base_dir / "videos" / str(video_index)
 
+    # Pull the most-recent PromptLog per scene for this project (any job).
+    # Keyed by scene_index for quick lookup in the loop below.
+    latest_prompts = {}
+    try:
+        log_rows = db.query(models.PromptLog).filter(
+            models.PromptLog.project_id == project_id,
+            models.PromptLog.scene_index.isnot(None),
+        ).order_by(models.PromptLog.created_at.desc()).limit(200).all()
+        for row in log_rows:
+            if row.scene_index not in latest_prompts:
+                latest_prompts[row.scene_index] = row
+    except Exception:
+        pass
+
     out = []
     for i, scene in enumerate(scenes):
         clip = videos_dir / f"scene_{i+1:02d}.mp4"
         narration = (scene.get("narration_text") or scene.get("narration") or "") if isinstance(scene, dict) else ""
         visual_desc = (scene.get("visual_description") or "") if isinstance(scene, dict) else ""
+        prompt_row = latest_prompts.get(i)
         out.append({
             "scene_index": i,
             "scene_number": i + 1,
             "has_clip": clip.exists(),
             "clip_path": str(clip) if clip.exists() else None,
-            "narration": narration[:140] + ("..." if len(narration) > 140 else ""),
-            "visual_description": visual_desc[:200] + ("..." if len(visual_desc) > 200 else ""),
+            "narration": narration,
+            "narration_preview": narration[:140] + ("..." if len(narration) > 140 else ""),
+            "visual_description": visual_desc,
+            "visual_description_preview": visual_desc[:200] + ("..." if len(visual_desc) > 200 else ""),
             "duration_seconds": scene.get("duration_seconds", 8) if isinstance(scene, dict) else 8,
+            # From the latest PromptLog (if any) so the user can see what
+            # was actually sent to ComfyUI for this scene:
+            "final_prompt": prompt_row.final_prompt if prompt_row else None,
+            "trigger_words": prompt_row.trigger_words if prompt_row else None,
+            "suffix": prompt_row.suffix if prompt_row else None,
+            "lora_name": prompt_row.lora_name if prompt_row else None,
+            "seed": prompt_row.seed if prompt_row else None,
+            "status": prompt_row.status if prompt_row else None,
         })
     return out
 

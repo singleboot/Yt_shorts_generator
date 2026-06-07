@@ -885,7 +885,7 @@ class SchedulerService:
             db.close()
 
     def regenerate_single_scene(self, project_id: int, video_index: int, scene_index: int,
-                                 seed_offset: int = 1) -> dict:
+                                 seed_offset: int = 1, custom_prompt: str = None) -> dict:
         """Regenerate ONE scene clip without touching the rest of the pipeline.
 
         Steps:
@@ -902,6 +902,11 @@ class SchedulerService:
             seed_offset: Added to the deterministic seed so the new attempt
                 is a fresh take but stays in the same "family" as the original.
                 Default 1 (next seed in the family).
+            custom_prompt: Optional user-tweaked visual description. When
+                provided, it replaces the script's visual_description for
+                this scene. Trigger words + suffix are still applied
+                automatically, so the user only writes the camera/subject/
+                setting/mood portion.
         """
         import json
         import asyncio as aio
@@ -982,6 +987,13 @@ class SchedulerService:
             visual_settings_for_seed = dict(visual_settings)
             visual_settings_for_seed["_regen_offset"] = seed_offset
             visual_settings_for_seed["_trigger_words"] = trigger_words_str
+            # CUSTOM PROMPT: user-tweaked visual description. Map keyed by
+            # scene index (0-based) so visuals_service can pick the right
+            # override per scene.
+            if custom_prompt and custom_prompt.strip():
+                visual_settings_for_seed["_custom_prompt_for"] = {
+                    str(scene_index): custom_prompt.strip()
+                }
             _settings_module._active_visual_settings = visual_settings_for_seed
             try:
                 scene_clip_paths = run_async(visuals_service.generate_scene_videos(

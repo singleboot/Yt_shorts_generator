@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Sparkles, RotateCcw, Volume2, Play, Square, Film, Layers, RefreshCw, AlertCircle, CheckCircle, RotateCw as Spinner } from 'lucide-react';
+import { X, Sparkles, RotateCcw, Volume2, Play, Square, Film, Layers, RefreshCw, AlertCircle, CheckCircle, RotateCw as Spinner, Pencil, Eye, EyeOff, Wand2 } from 'lucide-react';
 import { AI_STYLES, VOICES, MUSIC_GENRES } from '../constants/production';
 import api from '../api/client';
 
@@ -24,6 +24,10 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
   const [sceneRegenStatus, setSceneRegenStatus] = useState({}); // {scene_index: 'regenerating' | 'failed' | 'completed'}
   const [reassembleStatus, setReassembleStatus] = useState(null); // null | 'running' | 'completed' | 'failed'
   const [reassembleMsg, setReassembleMsg] = useState('');
+  // Per-scene prompt editor state
+  // promptEdits[sceneIndex] = { text, expanded, useCustom, dirty }
+  const [promptEdits, setPromptEdits] = useState({});
+  const [tweakingAll, setTweakingAll] = useState(false); // global "edit all prompts" mode
 
   const togglePreview = (type, id) => {
     const key = `${type}:${id}`;
@@ -88,12 +92,28 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
     }
   };
 
-  const handleRegenScene = async (sceneIndex) => {
+  const handleRegenScene = async (sceneIndex, customPrompt = null) => {
     setSceneRegenStatus(prev => ({ ...prev, [sceneIndex]: 'regenerating' }));
     try {
-      const res = await api.post(`/projects/${project.id}/videos/${video.index}/scenes/${sceneIndex}/regenerate`);
+      const params = { seed_offset: 1 };
+      if (customPrompt && customPrompt.trim()) {
+        params.custom_prompt = customPrompt.trim();
+      }
+      const res = await api.post(
+        `/projects/${project.id}/videos/${video.index}/scenes/${sceneIndex}/regenerate`,
+        null,
+        { params }
+      );
       if (res.data?.status === 'success') {
         setSceneRegenStatus(prev => ({ ...prev, [sceneIndex]: 'completed' }));
+        // Mark this scene's edit as no-longer-dirty
+        setPromptEdits(prev => {
+          const next = { ...prev };
+          if (next[sceneIndex]) {
+            next[sceneIndex] = { ...next[sceneIndex], dirty: false };
+          }
+          return next;
+        });
         // Reload scene list
         await loadScenes();
         // Notify parent so it can refresh project state
@@ -105,6 +125,30 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
       setSceneRegenStatus(prev => ({ ...prev, [sceneIndex]: 'failed' }));
       alert('Scene regeneration failed: ' + (e?.response?.data?.detail || e.message));
     }
+  };
+
+  const setPromptEdit = (sceneIndex, partial) => {
+    setPromptEdits(prev => ({
+      ...prev,
+      [sceneIndex]: {
+        text: partial.text !== undefined ? partial.text : (prev[sceneIndex]?.text ?? ''),
+        expanded: partial.expanded !== undefined ? partial.expanded : (prev[sceneIndex]?.expanded ?? false),
+        useCustom: partial.useCustom !== undefined ? partial.useCustom : (prev[sceneIndex]?.useCustom ?? false),
+        dirty: partial.dirty !== undefined ? partial.dirty : (prev[sceneIndex]?.dirty ?? false),
+      },
+    }));
+  };
+
+  const resetPromptEdit = (sceneIndex, original) => {
+    setPromptEdits(prev => ({
+      ...prev,
+      [sceneIndex]: {
+        text: original,
+        expanded: prev[sceneIndex]?.expanded ?? false,
+        useCustom: false,
+        dirty: false,
+      },
+    }));
   };
 
   const handleReassemble = async () => {
@@ -391,15 +435,46 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
           <div className="p-5 space-y-4">
             <div className="flex items-center justify-between">
               <p className="text-[11px] text-[#9AA0A6]">
-                {scenesLoading ? 'Loading scenes…' : `${scenes.length} scenes • Regenerate any scene individually`}
+                {scenesLoading ? 'Loading scenes…' : `${scenes.length} scenes • Tweak any prompt before regenerating`}
               </p>
-              <button
-                onClick={loadScenes}
-                className="neo-btn-ghost flex items-center gap-1.5 px-2.5 py-1 text-[10px]"
-              >
-                <RefreshCw className="h-3 w-3" />
-                Refresh
-              </button>
+              <div className="flex gap-1.5">
+                <button
+                  onClick={() => {
+                    const next = !tweakingAll;
+                    setTweakingAll(next);
+                    // Expand all editors with their current visual_description as default
+                    const updated = { ...promptEdits };
+                    scenes.forEach(s => {
+                      if (!updated[s.scene_index]) {
+                        updated[s.scene_index] = {
+                          text: s.visual_description || '',
+                          expanded: next,
+                          useCustom: false,
+                          dirty: false,
+                        };
+                      } else {
+                        updated[s.scene_index] = {
+                          ...updated[s.scene_index],
+                          expanded: next,
+                        };
+                      }
+                    });
+                    setPromptEdits(updated);
+                  }}
+                  className={`neo-btn-ghost flex items-center gap-1.5 px-2.5 py-1 text-[10px] ${tweakingAll ? 'border-[#C6F11D] text-[#C6F11D]' : ''}`}
+                  title={tweakingAll ? 'Hide all prompt editors' : 'Show prompt editor for all scenes'}
+                >
+                  {tweakingAll ? <EyeOff className="h-3 w-3" /> : <Pencil className="h-3 w-3" />}
+                  {tweakingAll ? 'Hide All' : 'Tweak All'}
+                </button>
+                <button
+                  onClick={loadScenes}
+                  className="neo-btn-ghost flex items-center gap-1.5 px-2.5 py-1 text-[10px]"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  Refresh
+                </button>
+              </div>
             </div>
 
             {/* Reassemble action bar */}
@@ -434,8 +509,12 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
                 const status = sceneRegenStatus[s.scene_index];
                 const isRegenerating = status === 'regenerating';
                 const isFailed = status === 'failed';
+                const edit = promptEdits[s.scene_index];
+                const isTweaking = edit?.expanded || false;
+                const effectiveText = edit?.text ?? s.visual_description ?? '';
+                const isDirty = edit?.dirty || false;
                 return (
-                  <div key={s.scene_index} className={`neo-card p-3 ${isRegenerating ? 'border-l-4 border-[#C6F11D]' : isFailed ? 'border-l-4 border-[#FF5757]' : ''}`}>
+                  <div key={s.scene_index} className={`neo-card p-3 ${isRegenerating ? 'border-l-4 border-[#C6F11D]' : isFailed ? 'border-l-4 border-[#FF5757]' : isDirty ? 'border-l-4 border-[#FFC845]' : ''}`}>
                     <div className="flex items-start gap-3">
                       <div className="flex flex-col items-center justify-center w-10 h-10 rounded-lg bg-[#050608] border border-[#252A33] shrink-0">
                         <span className="text-[10px] text-[#5F6772]">SCENE</span>
@@ -452,6 +531,9 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
                           ) : (
                             <span className="text-[#FFC845]">● no clip</span>
                           )}
+                          {s.trigger_words && (
+                            <span className="text-[#9AA0A6]">LoRA: {s.lora_name?.split(/[\\/]/).pop() || '—'}</span>
+                          )}
                         </div>
                         {isRegenerating && (
                           <div className="mt-2 text-[10px] text-[#C6F11D] flex items-center gap-1.5">
@@ -465,19 +547,78 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
                             Failed
                           </div>
                         )}
-                      </div>
-                      <button
-                        onClick={() => handleRegenScene(s.scene_index)}
-                        disabled={isRegenerating}
-                        className="neo-btn-ghost flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] shrink-0 disabled:opacity-50"
-                      >
-                        {isRegenerating ? (
-                          <Spinner className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <RefreshCw className="h-3 w-3" />
+
+                        {/* PROMPT EDITOR (collapsible) */}
+                        {isTweaking && (
+                          <div className="mt-3 space-y-2 rounded-xl border border-[#252A33] bg-[#0A0C10] p-3">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5 text-[10px] font-semibold text-[#C6F11D]">
+                                <Wand2 className="h-3 w-3" />
+                                Tweak visual prompt
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {isDirty && (
+                                  <span className="text-[9px] text-[#FFC845]">unsaved</span>
+                                )}
+                                <button
+                                  onClick={() => resetPromptEdit(s.scene_index, s.visual_description || '')}
+                                  className="text-[10px] text-[#9AA0A6] hover:text-[#F5F5F5] flex items-center gap-1"
+                                  title="Reset to original"
+                                >
+                                  <RotateCcw className="h-3 w-3" /> Reset
+                                </button>
+                              </div>
+                            </div>
+                            <textarea
+                              value={effectiveText}
+                              onChange={e => setPromptEdit(s.scene_index, { text: e.target.value, dirty: e.target.value !== (s.visual_description || '') })}
+                              rows={4}
+                              className="w-full p-2 rounded-lg bg-[#050608] border border-[#252A33] text-[11px] text-[#F5F5F5] font-mono leading-relaxed outline-none focus:border-[#C6F11D]/50 transition-all resize-none"
+                              placeholder="Camera move of subject in setting, doing action, lighting, mood, style triggers..."
+                            />
+                            {s.trigger_words && (
+                              <div className="text-[9px] text-[#5F6772] leading-relaxed">
+                                <span className="text-[#C6F11D]">Auto-prepended triggers:</span> {s.trigger_words}
+                                <br />
+                                <span className="text-[#C6F11D]">Auto-appended suffix:</span> {s.suffix || '25fps, high quality, vertical 9:16...'}
+                                <br />
+                                <span className="text-[#5F6772]">Your text goes between the triggers and suffix.</span>
+                              </div>
+                            )}
+                            {s.final_prompt && (
+                              <details className="text-[9px] text-[#5F6772]">
+                                <summary className="cursor-pointer hover:text-[#9AA0A6]">Last sent to ComfyUI ({(s.final_prompt || '').length} chars)</summary>
+                                <div className="mt-1 p-2 bg-[#050608] rounded-lg font-mono leading-relaxed break-words whitespace-pre-wrap">
+                                  {s.final_prompt}
+                                </div>
+                              </details>
+                            )}
+                          </div>
                         )}
-                        Regenerate
-                      </button>
+                      </div>
+                      <div className="flex flex-col gap-1.5 shrink-0">
+                        <button
+                          onClick={() => setPromptEdit(s.scene_index, { expanded: !isTweaking })}
+                          className={`neo-btn-ghost flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] ${isTweaking ? 'border-[#C6F11D] text-[#C6F11D]' : ''}`}
+                          title="Tweak visual prompt"
+                        >
+                          {isTweaking ? <EyeOff className="h-3 w-3" /> : <Pencil className="h-3 w-3" />}
+                          {isTweaking ? 'Hide' : 'Tweak'}
+                        </button>
+                        <button
+                          onClick={() => handleRegenScene(s.scene_index, isTweaking && isDirty ? effectiveText : null)}
+                          disabled={isRegenerating}
+                          className="neo-btn-ghost flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] disabled:opacity-50"
+                          title={isDirty ? 'Regenerate with tweaked prompt' : 'Regenerate with new seed'}
+                        >
+                          {isRegenerating ? (
+                            <Spinner className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-3 w-3" />
+                          )}
+                          {isDirty ? 'Tweak & Regen' : 'Regenerate'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );

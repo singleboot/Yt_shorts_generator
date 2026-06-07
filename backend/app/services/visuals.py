@@ -603,6 +603,24 @@ class VisualsService:
             raw_desc = scene.get("visual_description", "") or "cinematic wide shot of an empty stadium at golden hour, no movement"
             base_prompt = self._sanitize_visual_description(raw_desc, scene_index=i, total_scenes=len(scenes))
 
+            # CUSTOM PROMPT OVERRIDE: when the user has manually tweaked a
+            # scene's prompt in the EditVideoModal, scheduler sets
+            # _active_visual_settings["_custom_prompt_for"][scene_index] and
+            # we use that exact text here. Trigger words + suffix are still
+            # prepended/appended so LoRA + format stay consistent, but the
+            # user's content is preserved.
+            try:
+                from app.config import settings as _settings
+                _active = getattr(_settings, "_active_visual_settings", None)
+                if isinstance(_active, dict):
+                    custom_map = _active.get("_custom_prompt_for") or {}
+                    if isinstance(custom_map, dict) and str(i) in custom_map:
+                        custom = (custom_map[str(i)] or "").strip()
+                        if custom:
+                            base_prompt = custom
+            except Exception:
+                pass
+
             # Prepend style trigger words so the LoRA actually applies the intended
             # style. Without trigger words, the LoRA's effect blends in weakly and
             # the base prompt's content style dominates — causing inconsistent

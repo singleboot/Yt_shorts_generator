@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Terminal, RefreshCw, Filter, Search, Copy, ExternalLink,
-  AlertCircle, CheckCircle, Clock, RotateCw, Trash2, ChevronDown, ChevronRight, Sparkles
+  AlertCircle, CheckCircle, Clock, RotateCw, Trash2, ChevronDown, ChevronRight, Sparkles, ArrowLeft
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 
 const POLL_INTERVAL_MS = 2000;
 
 function PromptConsole() {
+  const navigate = useNavigate();
   const [prompts, setPrompts] = useState([]);
   const [stats, setStats] = useState(null);
   const [projects, setProjects] = useState([]);
@@ -172,6 +174,15 @@ function PromptConsole() {
 
   return (
     <div className="p-8 max-w-[1400px] mx-auto">
+      {/* Back button */}
+      <button
+        onClick={() => navigate(-1)}
+        className="neo-btn-ghost flex items-center gap-1.5 px-3 py-1.5 text-[11px] mb-4"
+        title="Go back to previous page"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" />
+        Back
+      </button>
       {/* Header */}
       <div className="flex justify-between items-start mb-6">
         <div>
