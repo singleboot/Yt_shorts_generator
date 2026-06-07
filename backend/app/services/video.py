@@ -25,15 +25,30 @@ class VideoService:
         mixed_audio_path: Path = None,    # pre-mixed voice+music (if None, will mix)
         music_volume: float = 0.15,
         voice_volume: float = 1.0,
+        target_width: int = 1080,         # final video width (was hardcoded 1080)
+        target_height: int = 1920,        # final video height (was hardcoded 1920)
+        transition_style: str = "none",   # ffmpeg xfade transition (or "none")
+        transition_duration: float = 0.0, # seconds trimmed from each cut
+        audio_transition: str = "match_video",  # "match_video" | "none"
     ) -> bool:
         """Assemble final video: concat clips, mix audio, burn captions.
 
         New pipeline (post-t2v refactor):
-        1. Upscale each 720p scene clip to 1080p (ffmpeg scale filter)
-        2. Concat all scene clips (ffmpeg concat demuxer, no re-encode)
+        1. Upscale each scene clip to (target_w x target_h) (ffmpeg scale filter)
+        2. Concat all scene clips with optional xfade transitions
         3. Mix voiceover + music (moviepy CompositeAudioClip)
-        4. Generate .ass subtitle file
+        4. Generate .ass subtitle file (transition_duration-aware timeline)
         5. ffmpeg mux: video + audio + .ass subtitles → final.mp4
+
+        target_w/target_h: per-project aspect ratio from visual_settings.
+            vertical=720x1280, horizontal=1280x720, horizontal_hd=1920x1080.
+        transition_style: one of the values in config.TRANSITION_STYLES, or "none".
+            "none" preserves the original hard-cut behavior (fast, no re-encode).
+        transition_duration: 0.0-1.5 seconds. Trimmed from each scene's
+            audio start (except the last). Total output duration =
+            sum(scene_durations) - (N-1) * transition_duration.
+        audio_transition: "match_video" applies acrossfade to voiceover +
+            music in lockstep with the video transition; "none" hard-cuts audio.
         """
         try:
             output_path = Path(output_path)
@@ -41,12 +56,18 @@ class VideoService:
             work_dir = output_path.parent / "_work"
             work_dir.mkdir(parents=True, exist_ok=True)
 
-            # 1. Upscale each clip 720p -> 1080p
-            upscaled_clips = self._upscale_clips(scene_clips, work_dir)
+            # 1. Upscale each clip to (target_w x target_h)
+            upscaled_clips = self._upscale_clips(scene_clips, work_dir, target_width, target_height)
 
-            # 2. Concat all upscaled clips
+            # 2. Concat all upscaled clips (with optional xfade transitions)
             raw_video = work_dir / "raw_concat.mp4"
-            if not self._concat_videos(upscaled_clips, raw_video):
+            if not self._concat_videos(
+                upscaled_clips, raw_video,
+                transition_style=transition_style,
+                transition_duration=transition_duration,
+                audio_assets=audio_assets,
+                audio_transition=audio_transition,
+            ):
                 return False
 
             # 3. Mix voiceover + music (if not already mixed)
@@ -89,6 +110,7 @@ class VideoService:
                     audio_assets=audio_assets,
                     caption_settings=caption_settings,
                     output_path=ass_path,
+                    transition_duration=transition_duration,
                 )
             except Exception as e:
                 print(f"Subtitle generation failed (continuing without): {e}")
@@ -135,15 +157,21 @@ class VideoService:
         music.close()
         mixed.close()
 
-    def _upscale_clips(self, clips: List[Path], work_dir: Path) -> List[Path]:
-        """Upscale 720p scene clips to 1080p using ffmpeg lanczos."""
+    def _upscale_clips(self, clips: List[Path], work_dir: Path,
+                       target_w: int = 1080, target_h: int = 1920) -> List[Path]:
+        """Upscale scene clips to (target_w x target_h) using ffmpeg lanczos.
+
+        Honors any aspect ratio - 720x1280 (vertical Shorts), 1280x720
+        (horizontal LD), 1920x1080 (horizontal HD). The hardcoded 1080:1920
+        was correct only for vertical Shorts and broke horizontal projects.
+        """
         upscaled = []
         for i, clip in enumerate(clips):
             out = work_dir / f"upscaled_{i:02d}.mp4"
             try:
                 cmd = [
                     "ffmpeg", "-y", "-i", str(clip),
-                    "-vf", "scale=1080:1920:flags=lanczos",
+                    "-vf", f"scale={target_w}:{target_h}:flags=lanczos",
                     "-c:v", "libx264", "-preset", "fast", "-crf", "20",
                     "-c:a", "aac", "-b:a", "128k",
                     "-pix_fmt", "yuv420p",
@@ -157,22 +185,65 @@ class VideoService:
                 upscaled.append(clip)
         return upscaled
 
-    def _concat_videos(self, clips: List[Path], output: Path) -> bool:
-        """Concatenate videos using ffmpeg concat demuxer (no re-encode if codecs match)."""
+    def _concat_videos(
+        self,
+        clips: List[Path],
+        output: Path,
+        transition_style: str = "none",
+        transition_duration: float = 0.0,
+        audio_assets: List[Dict] = None,
+        audio_transition: str = "match_video",
+    ) -> bool:
+        """Concatenate videos, optionally with ffmpeg xfade transitions.
+
+        transition_style == "none" (the default and the 99% case for projects
+        that haven't opted into transitions): use the original ffmpeg concat
+        demuxer path - no re-encode, no extra cost, no risk.
+
+        Otherwise: build an N-1 xfade filter graph chained across all clips,
+        with acrossfade on the audio in lockstep. Output is re-encoded once
+        (libx264) which is the only way to do transitions. Total output
+        duration = sum(scene_durations) - (N-1) * transition_duration.
+
+        Validation: if transition_duration >= min(scene_duration * 0.5) the
+        transition would eat more than half the shortest scene. We clamp
+        to 0.4 * min(scene_duration) and log a warning.
+        """
         if not clips:
             return False
         if len(clips) == 1:
             shutil.copy(clips[0], output)
             return True
 
+        # If no transitions requested, use the original fast path.
+        if transition_style == "none" or transition_duration <= 0.0:
+            return self._concat_hardcut(clips, output)
+
+        # Validate transition_duration is sane for the shortest clip.
         try:
-            # First, re-encode all to same codec for clean concat
+            durations = [self._get_duration(c) for c in clips]
+            min_dur = min(d for d in durations if d > 0)
+            if transition_duration >= min_dur * 0.5:
+                old = transition_duration
+                transition_duration = round(min_dur * 0.4, 3)
+                print(f"[concat] transition_duration {old}s too long for shortest clip "
+                      f"({min_dur:.2f}s), clamping to {transition_duration}s", flush=True)
+        except Exception as e:
+            print(f"[concat] duration probe failed, using requested transition_duration: {e}", flush=True)
+
+        return self._concat_with_xfade(
+            clips, output, transition_style, transition_duration,
+            audio_assets or [], audio_transition
+        )
+
+    def _concat_hardcut(self, clips: List[Path], output: Path) -> bool:
+        """Original concat demuxer path (no transitions)."""
+        try:
             concat_list = output.parent / "concat_list.txt"
             with open(concat_list, "w") as f:
                 for clip in clips:
                     f.write(f"file '{clip.resolve()}'\n")
 
-            # Re-encode to consistent format
             intermediate = output.parent / "concat_intermediate.mp4"
             cmd = [
                 "ffmpeg", "-y", "-f", "concat", "-safe", "0",
@@ -189,7 +260,6 @@ class VideoService:
             return True
         except subprocess.CalledProcessError as e:
             print(f"Concat failed, falling back to moviepy: {e}")
-            # Fallback to moviepy
             try:
                 video_clips = [moviepy.VideoFileClip(str(c)) for c in clips]
                 final = moviepy.concatenate_videoclips(video_clips, method="compose")
@@ -201,6 +271,140 @@ class VideoService:
             except Exception as e2:
                 print(f"moviepy fallback also failed: {e2}")
                 return False
+
+    def _concat_with_xfade(
+        self,
+        clips: List[Path],
+        output: Path,
+        transition_style: str,
+        transition_duration: float,
+        audio_assets: List[Dict],
+        audio_transition: str,
+    ) -> bool:
+        """Build ffmpeg xfade filter graph for N clips with chained transitions.
+
+        For N clips, the filter graph is:
+            [0][1]xfade=transition=T:d=D:offset=O0[v01];
+            [v01][2]xfade=transition=T:d=D:offset=O1[v012];
+            ...
+        where O_i = sum(durations[0..i+1]) - transition_duration.
+
+        Audio is either acrossfaded in lockstep (audio_transition="match_video")
+        or passed through unchanged ("none"). Either way the voice lines
+        end up on the same timeline as the visuals because we trim the
+        transition_duration from the offset.
+
+        On any failure we fall back to the hardcut path and log a warning.
+        """
+        try:
+            # Resolve ffmpeg transition name from project setting
+            xfade_name = settings.TRANSITION_STYLES.get(transition_style)
+            if not xfade_name:
+                print(f"[concat] Unknown transition_style '{transition_style}', falling back to hardcut")
+                return self._concat_hardcut(clips, output)
+
+            # Probe each clip's duration for offset math
+            durations = []
+            for c in clips:
+                d = self._get_duration(c)
+                durations.append(d if d > 0 else 6.0)  # fallback to 6s if probe fails
+
+            n = len(clips)
+            td = transition_duration
+
+            # Build video filter graph
+            video_filters = []
+            # Cumulative offset starts at durations[0] - td (the first scene's
+            # end, minus the transition that will overlap into scene 2).
+            cumulative = durations[0] - td
+            for i in range(1, n):
+                v_in = f"v{i-1}{i}" if i > 1 else "v01"
+                v_out = f"v{i}{i+1}" if i < n - 1 else "vout"
+                video_filters.append(
+                    f"[{v_in}][{i}:v]xfade=transition={xfade_name}:duration={td}:offset={cumulative:.3f}[{v_out}]"
+                )
+                if i < n - 1:
+                    cumulative += durations[i] - td
+                # last iteration: cumulative is the total output duration, not used further
+
+            video_filter_str = ";\n".join(video_filters)
+
+            # Build audio filter graph
+            audio_filter_str = ""
+            if audio_transition == "match_video" and audio_assets:
+                # Collect voiceover paths; only build acrossfade graph for those that exist
+                voice_paths = []
+                for asset in audio_assets:
+                    p = asset.get("local_path") or asset.get("path")
+                    if p and Path(p).exists():
+                        voice_paths.append(str(p))
+                if len(voice_paths) == len(clips):
+                    af = []
+                    cumulative_a = durations[0] - td
+                    for i in range(1, n):
+                        a_in = f"a{i-1}{i}" if i > 1 else "a01"
+                        a_out = f"a{i}{i+1}" if i < n - 1 else "aout"
+                        af.append(
+                            f"[{a_in}][{i}:a]acrossfade=d={td}:c1=tri:c2=tri[{a_out}]"
+                        )
+                        if i < n - 1:
+                            cumulative_a += durations[i] - td
+                    audio_filter_str = ";\n".join(af)
+                else:
+                    # Some voiceovers missing - just pass audio through unfiltered
+                    print(f"[concat] voiceover count mismatch (have {len(voice_paths)} for {len(clips)} clips), skipping audio crossfade")
+            elif audio_transition == "none" or not audio_assets:
+                # Use voiceover concatenation later (audio_service), skip here
+                pass
+
+            # Build ffmpeg input args (with explicit -i for each clip)
+            cmd = ["ffmpeg", "-y"]
+            for c in clips:
+                cmd.extend(["-i", str(c)])
+            filter_complex = f"-filter_complex \"{video_filter_str}"
+            if audio_filter_str:
+                filter_complex += f";\n{audio_filter_str}"
+            filter_complex += "\""
+            cmd.extend(filter_complex.split())
+            # Map final video + audio (if filter graph has audio)
+            cmd.extend(["-map", "[vout]"])
+            if audio_filter_str:
+                cmd.extend(["-map", "[aout]"])
+            else:
+                # No audio filter - take audio from first clip via stream copy
+                cmd.extend(["-map", "0:a?"])
+            cmd.extend([
+                "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                "-c:a", "aac", "-b:a", "192k",
+                "-pix_fmt", "yuv420p",
+                "-r", "30",
+                "-movflags", "+faststart",
+                "-shortest",
+                str(output)
+            ])
+
+            print(f"[concat] Building xfade graph for {n} clips, transition={xfade_name} td={td}s", flush=True)
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"[concat] xfade failed: {result.stderr[:500]}", flush=True)
+                print(f"[concat] Falling back to hardcut", flush=True)
+                return self._concat_hardcut(clips, output)
+            return True
+        except Exception as e:
+            print(f"[concat] xfade exception: {e}, falling back to hardcut", flush=True)
+            return self._concat_hardcut(clips, output)
+
+    def _get_duration(self, clip: Path) -> float:
+        """Get video clip duration in seconds using ffprobe. Returns 0.0 on failure."""
+        try:
+            result = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", str(clip)],
+                capture_output=True, text=True, timeout=10
+            )
+            return float(result.stdout.strip())
+        except Exception:
+            return 0.0
 
     def _concat_audio_assets(self, audio_assets: List[Dict], work_dir: Path) -> Path:
         """Concatenate per-scene voiceover files into one mp3."""

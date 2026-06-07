@@ -34,6 +34,7 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     _run_migrations()
     _reconcile_video_counts()
+    _reconcile_aspect_defaults()
 
 
 def _reconcile_video_counts():
@@ -81,6 +82,55 @@ def _reconcile_video_counts():
             conn.commit()
         except Exception:
             pass
+
+
+def _reconcile_aspect_defaults():
+    """Backfill aspect_ratio + transition_style on existing project rows.
+
+    New fields added to visual_settings default (aspect_ratio, transition_style,
+    transition_duration, audio_transition). Projects created before these fields
+    existed have them missing in stored JSON. Backfill with safe defaults so
+    the runtime always reads a complete dict.
+    """
+    import json
+    DEFAULTS = {
+        "aspect_ratio": "vertical",
+        "transition_style": "none",
+        "transition_duration": 0.4,
+        "audio_transition": "match_video",
+    }
+    with engine.connect() as conn:
+        try:
+            rows = conn.execute(text("SELECT id, visual_settings FROM projects")).fetchall()
+        except Exception:
+            return
+        changed = 0
+        for row in rows:
+            pid, vs_raw = row[0], row[1]
+            try:
+                vs = json.loads(vs_raw) if isinstance(vs_raw, str) and vs_raw else (vs_raw or {})
+            except Exception:
+                continue
+            if not isinstance(vs, dict):
+                continue
+            dirty = False
+            for k, v in DEFAULTS.items():
+                if k not in vs:
+                    vs[k] = v
+                    dirty = True
+            if dirty:
+                conn.execute(
+                    text("UPDATE projects SET visual_settings = :vs WHERE id = :pid"),
+                    {"vs": json.dumps(vs), "pid": pid},
+                )
+                changed += 1
+        if changed:
+            try:
+                conn.commit()
+            except Exception:
+                pass
+        if changed:
+            print(f"[migrate] Backfilled aspect/transition defaults on {changed} project(s)", flush=True)
 
 
 def _run_migrations():

@@ -10,7 +10,7 @@ function formatDateTime(iso) {
     + ' · ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
 
-function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mode, onRegenScript, onRemovePlaceholder, onGenerateVideo }) {
+function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mode, onRegenScript, onRemovePlaceholder, onGenerateVideo, onCleanScenes }) {
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState('');
 
@@ -385,6 +385,23 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
           </p>
         </div>
         <div className="shrink-0 flex items-center gap-1">
+          {onCleanScenes && isComplete && !overrides?.intermediate_cleaned && (
+            <button
+              onClick={onCleanScenes}
+              className="neo-btn-ghost p-1.5"
+              title="Free disk space: delete scene clips and audio (keeps final video)"
+            >
+              <Archive className="h-3.5 w-3.5 text-[#FFC845]" />
+            </button>
+          )}
+          {onCleanScenes && overrides?.intermediate_cleaned && (
+            <span
+              className="neo-btn-ghost p-1.5 cursor-default"
+              title={`Intermediate scenes cleaned at ${overrides.intermediate_cleaned_at || 'unknown'}`}
+            >
+              <Archive className="h-3.5 w-3.5 text-[#5F6772]" />
+            </span>
+          )}
           {onDelete && (
             <button
               onClick={onDelete}

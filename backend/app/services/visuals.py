@@ -173,7 +173,32 @@ class VisualsService:
                 return avail
 
         return None
-    
+
+    def _resolve_scene_dims(self) -> tuple:
+        """Resolve the (width, height, aspect_str) for the current scene.
+
+        The scheduler stashes the project's width/height/aspect_str on the
+        _active_visual_settings module-level hook (see app.config.settings).
+        This lets a single t2v call read the project's current aspect without
+        threading it through every function signature, and lets the per-scene
+        regen path pick up aspect changes automatically.
+
+        Falls back to 720x1280 vertical (legacy default) if the hook is empty
+        or the aspect is unknown.
+        """
+        try:
+            from app.config import settings as _settings
+            _active = getattr(_settings, "_active_visual_settings", None)
+            if isinstance(_active, dict):
+                w = int(_active.get("_width") or 0)
+                h = int(_active.get("_height") or 0)
+                a = _active.get("_aspect_str") or "vertical"
+                if w > 0 and h > 0:
+                    return (w, h, a)
+        except Exception:
+            pass
+        return (720, 1280, "vertical")
+
     def _inject_lora(self, workflow: dict, lora_name: str, strength: float = 0.8) -> dict:
         """Dynamically insert LoRA nodes into workflow if LoRA file exists."""
         if not lora_name:
@@ -574,7 +599,23 @@ class VisualsService:
                     pass
                 break
 
-            duration = scene.get("duration_seconds", 8)
+            # Resolve render dimensions for this scene. Scheduler stashes
+            # width/height/aspect_str on the _active_visual_settings hook so
+            # every scene in the same job uses consistent dims, and per-scene
+            # regen picks up the project's current aspect automatically.
+            scene_w, scene_h, aspect_str = self._resolve_scene_dims()
+            width = scene_w
+            height = scene_h
+
+            # Resolve per-scene duration. HD aspect auto-shortens (5s) to stay
+            # inside RTX 3060 12GB VRAM at 1920x1080.
+            aspect_per_scene = settings.ASPECT_RATIOS.get(aspect_str, {}).get("per_scene", 6)
+            scene_duration = scene.get("duration_seconds", aspect_per_scene)
+            # Honor the aspect's per-scene cap (HD=5s, others=6s) so a script
+            # with duration_seconds=8 doesn't OOM on HD.
+            if scene_duration > aspect_per_scene:
+                scene_duration = aspect_per_scene
+            duration = scene_duration
             # Convert duration to frames at 25fps, clamp to LTX max of ~250 frames
             video_length = min(int(duration * 25) + 1, 250)
             # Ensure frame count is (n*8+1) per LTX requirements
@@ -641,16 +682,26 @@ class VisualsService:
                 if triggers:
                     trigger_prefix = f"{triggers}, "
 
+            # Compose the suffix for the current aspect. The LTX-2.3 model
+            # interprets these tokens as compositional guidance; the suffix
+            # also appears in the Prompt Console log so the user can audit it.
+            if aspect_str == "horizontal":
+                aspect_term = "horizontal 16:9, cinematic lighting, 1280x720 resolution"
+            elif aspect_str == "horizontal_hd":
+                aspect_term = "horizontal 16:9, cinematic lighting, 1920x1080 resolution"
+            else:
+                aspect_term = "vertical 9:16, cinematic lighting, 720x1280 resolution"
+
             prompt = (
                 f"{trigger_prefix}{base_prompt}, 25fps, high quality, "
-                f"vertical 9:16, cinematic lighting, 720x1280 resolution"
+                f"{aspect_term}"
             )
 
             if on_progress:
                 on_progress(i, len(scenes), f"Generating scene {i+1}/{len(scenes)}: {base_prompt[:50]}...")
 
             # Build log metadata for the Prompt Console
-            suffix = "25fps, high quality, vertical 9:16, cinematic lighting, 720x1280 resolution"
+            suffix = f"25fps, high quality, {aspect_term}"
             log_meta = None
             if db is not None:
                 log_meta = {
@@ -670,8 +721,8 @@ class VisualsService:
                 seed=seed,
                 lora_name=lora_name,
                 lora_strength=lora_strength,
-                width=720,
-                height=1280,
+                width=width,
+                height=height,
                 video_length=video_length,
                 log_meta=log_meta,
                 db=db,
@@ -692,7 +743,7 @@ class VisualsService:
 
             if mp4_bytes is None:
                 print(f"Failed to generate scene {i+1}, using fallback black clip")
-                mp4_bytes = self._make_fallback_clip(duration, 720, 1280)
+                mp4_bytes = self._make_fallback_clip(duration, width, height)
 
             scene_path = project_dir / f"scene_{i+1:02d}.mp4"
             scene_path.write_bytes(mp4_bytes)
@@ -755,7 +806,15 @@ class VisualsService:
             d = re.sub(pat, "", d, flags=re.IGNORECASE)
         # Drop generic quality suffixes LTX already handles via workflow
         d = re.sub(r",?\s*(high quality|8k|4k|ultra ?realistic|hyperrealistic)[^,\.]*", "", d, flags=re.IGNORECASE)
-        d = re.sub(r",?\s*(vertical 9:?16|cinematic lighting|720x1280)[^,\.]*", "", d, flags=re.IGNORECASE)
+        # Drop aspect/resolution terms across all supported aspects. The
+        # suffix is re-appended in generate_scene_videos based on the current
+        # aspect ratio, so we never want the LLM's own aspect term in the
+        # sanitized base (it would either duplicate or contradict).
+        d = re.sub(
+            r",?\s*(vertical 9:?16|horizontal 16:?9|landscape|cinematic lighting|"
+            r"720x1280|1280x720|1920x1080)[^,\.]*",
+            "", d, flags=re.IGNORECASE
+        )
         # Collapse multiple commas/spaces
         d = re.sub(r"\s*,\s*,\s*", ", ", d)
         d = re.sub(r"\s{2,}", " ", d).strip().strip(",").strip()
@@ -855,14 +914,20 @@ class VisualsService:
         """Search Pixabay for free stock videos."""
         if not self.pixabay_key:
             return []
-        
+
+        # Pick orientation from the active aspect. HD still uses 'horizontal'
+        # since Pixabay doesn't distinguish 720p from 1080p; aspect_term is
+        # what matters for relevance ranking.
+        _, _, aspect_str = self._resolve_scene_dims()
+        pixabay_orientation = "horizontal" if aspect_str.startswith("horizontal") else "vertical"
+
         url = "https://pixabay.com/api/videos/"
         params = {
             "key": self.pixabay_key,
             "q": query,
             "per_page": per_page,
             "safesearch": "true",
-            "orientation": "vertical"
+            "orientation": pixabay_orientation
         }
         
         try:
@@ -898,14 +963,17 @@ class VisualsService:
         """Search Pixabay for free stock images."""
         if not self.pixabay_key:
             return []
-        
+
+        _, _, aspect_str = self._resolve_scene_dims()
+        pixabay_orientation = "horizontal" if aspect_str.startswith("horizontal") else "vertical"
+
         url = "https://pixabay.com/api/"
         params = {
             "key": self.pixabay_key,
             "q": query,
             "per_page": per_page,
             "safesearch": "true",
-            "orientation": "vertical"
+            "orientation": pixabay_orientation
         }
         
         try:

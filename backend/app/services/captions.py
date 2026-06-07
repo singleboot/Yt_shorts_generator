@@ -52,6 +52,7 @@ def generate_ass_subtitles(
     audio_assets: List[Dict],
     caption_settings: Dict,
     output_path: Path,
+    transition_duration: float = 0.0,
 ) -> Path:
     """Generate .ass subtitle file with word-by-word animation.
 
@@ -60,13 +61,25 @@ def generate_ass_subtitles(
         audio_assets: List of audio asset dicts with local_path
         caption_settings: Dict with style, font, font_size, color, stroke_color, stroke_width, animation
         output_path: Where to save the .ass file
+        transition_duration: Seconds trimmed from each scene's audio start
+            when transitions are applied. The video timeline = audio_timeline -
+            (i * transition_duration) for scene i, so captions must match
+            that math exactly. Pass 0.0 for hard-cut (no transition) projects.
 
     Returns:
-        Path to the .ass file
+        Path to the .ass subtitle file
     """
     # Caption settings
     font = caption_settings.get("font", "Impact")
-    font_size = caption_settings.get("font_size", 52)
+    # Scale font_size by output height (the captions.py default of 52 is
+    # tuned for 1280px-tall vertical video). For horizontal 1280x720 a
+    # 52px caption becomes 7% of the screen — way too big. For HD
+    # 1920x1080 the same 52px is fine. We compute the scale and clamp
+    # to a sensible range.
+    base_height = caption_settings.get("base_resolution_height", 1280)
+    raw_size = caption_settings.get("font_size", 52)
+    scaled_size = int(round(raw_size * (base_height / 1280.0)))
+    font_size = max(20, min(96, scaled_size))
     color = hex_to_ass_color(caption_settings.get("color", "#FFD700"))
     stroke_color = hex_to_ass_stroke(caption_settings.get("stroke_color", "#000000"))
     stroke_width = caption_settings.get("stroke_width", 3)
@@ -122,7 +135,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             text = narration.replace("\n", " ")
             ass_content += f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,{text}\n"
 
-        current_time += audio_duration
+        # Advance the timeline. With transitions, each scene's audio
+        # actually starts `i * transition_duration` earlier in the output
+        # video (the previous scene's tail overlaps with this scene's head).
+        # Subtitles need to be on the same timeline as the video, so the
+        # last scene does NOT subtract a transition (no scene after it to
+        # overlap with). Hard-cut projects pass transition_duration=0 so
+        # this reduces to the original behavior.
+        if i < len(scenes) - 1:
+            current_time += max(0.0, audio_duration - transition_duration)
+        else:
+            current_time += audio_duration
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)

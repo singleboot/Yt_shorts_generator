@@ -45,6 +45,36 @@ class Settings(BaseSettings):
     DEFAULT_HEIGHT: int = 1920
     DEFAULT_FPS: int = 30
     DEFAULT_DURATION: int = 45
+
+    # Aspect ratio settings: (width, height, per_scene_seconds, label)
+    # per_scene_seconds is the recommended per-scene duration for this aspect,
+    # honoring RTX 3060 12GB VRAM headroom. HD variants auto-shorten clips
+    # because 1920x1080 at 8s starts OOM-ing at the 2-stage sampler's peak.
+    ASPECT_RATIOS: dict = {
+        "vertical":       {"width": 720,  "height": 1280, "per_scene": 6,  "label": "Vertical 9:16 (720x1280)"},
+        "horizontal":     {"width": 1280, "height": 720,  "per_scene": 6,  "label": "Horizontal 16:9 (1280x720)"},
+        "horizontal_hd":  {"width": 1920, "height": 1080, "per_scene": 5,  "label": "Horizontal HD 16:9 (1920x1080)"},
+    }
+
+    # Transition settings: maps project visual_settings.transition_style values
+    # to the corresponding ffmpeg xfade filter transition names. "none" is a
+    # sentinel meaning hard cut (no xfade filter applied).
+    TRANSITION_STYLES: dict = {
+        "none":         None,
+        "fade":         "fade",
+        "fadeblack":    "fadeblack",
+        "fadewhite":    "fadewhite",
+        "dissolve":     "dissolve",
+        "slide_left":   "slideleft",
+        "slide_right":  "slideright",
+        "slide_up":     "slideup",
+        "slide_down":   "slidedown",
+        "wipe_left":    "wipeleft",
+        "wipe_right":   "wiperight",
+        "zoom_in":      "zoomin",
+        "circle_open":  "circleopen",
+        "circle_close": "circleclose",
+    }
     
     # LoRA Settings
     DEFAULT_LORA_STRENGTH: float = 0.8

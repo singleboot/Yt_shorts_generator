@@ -39,7 +39,16 @@ class Project(Base):
         "style": "cinematic",
         "transitions": "fade",
         "duration_per_scene": 5,
-        "total_duration": 45
+        "total_duration": 45,
+        "ai_style": None,
+        "lora_strength": 0.8,
+        "aspect_ratio": "vertical",          # vertical | horizontal | horizontal_hd
+        "transition_style": "none",          # none | fade | fadeblack | fadewhite | dissolve |
+                                            # slide_left | slide_right | slide_up | slide_down |
+                                            # wipe_left | wipe_right | zoom_in |
+                                            # circle_open | circle_close
+        "transition_duration": 0.4,          # seconds, 0.0-1.5
+        "audio_transition": "match_video",   # match_video | none
     })
 
     # Audio

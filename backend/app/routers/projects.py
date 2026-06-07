@@ -1328,6 +1328,34 @@ def reassemble_final_video(project_id: int, video_index: int,
     return result
 
 
+@router.post("/{project_id}/videos/{video_index}/clean-scenes", response_model=dict)
+def clean_video_scenes(project_id: int, video_index: int, db: Session = Depends(get_db)):
+    """Delete intermediate scene clips and audio chunks to free disk space.
+
+    Keeps the final_video.mp4 and the script. After cleanup, per-scene
+    regeneration on this video is LOCKED (would need a full re-render).
+    Idempotent: returns 200 with bytes_freed=0 if already cleaned.
+    """
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    script = db.query(models.Script).filter(
+        models.Script.project_id == project_id,
+        models.Script.video_index == video_index
+    ).order_by(models.Script.created_at.desc()).first()
+    if not script:
+        raise HTTPException(status_code=404, detail="No script for this video")
+
+    result = scheduler_service.cleanup_intermediate_scenes(
+        project_id=project_id,
+        video_index=video_index,
+    )
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("message", "Cleanup failed"))
+    return result
+
+
 @router.get("/{project_id}/videos/{video_index}/scenes", response_model=list)
 def list_video_scenes(project_id: int, video_index: int,
                        db: Session = Depends(get_db)):

@@ -397,7 +397,41 @@ class SchedulerService:
             db.commit()
             return
 
+        # Resolve aspect ratio from project visual_settings. Width/height and
+        # aspect_str get stashed on the _active_visual_settings module hook
+        # so visuals_service._resolve_scene_dims reads them for every scene
+        # (including per-scene regen via the same hook).
+        aspect_str = visual_settings.get("aspect_ratio", "vertical")
+        aspect_cfg = settings.ASPECT_RATIOS.get(aspect_str, settings.ASPECT_RATIOS["vertical"])
+        target_w = aspect_cfg["width"]
+        target_h = aspect_cfg["height"]
+        aspect_per_scene = aspect_cfg["per_scene"]
+
+        # Re-clamp each scene's duration to the aspect's per-scene cap.
+        # When a project is switched from vertical to HD horizontal (5s cap)
+        # the existing script's duration_seconds=8 would OOM at 1920x1080.
         scenes = script_data.get("scenes", [])
+        clamped = 0
+        for sc in scenes:
+            if isinstance(sc, dict) and sc.get("duration_seconds", 6) > aspect_per_scene:
+                sc["duration_seconds"] = aspect_per_scene
+                clamped += 1
+        if clamped:
+            script_data["scenes"] = scenes
+            # Persist the clamped script so subsequent reassembles don't
+            # re-trigger the clamp.
+            try:
+                from app.services.scheduler import _clamp_script_durations
+            except ImportError:
+                pass
+            if existing_script and existing_script.scenes:
+                existing_script.scenes = scenes
+                db.commit()
+            job.logs = (
+                f"Video {video_num}/{video_count} - Clamped {clamped} scene(s) "
+                f"to {aspect_per_scene}s for {aspect_str}"
+            )
+            db.commit()
 
         def scene_progress(idx, total, msg):
             """Update job progress during scene generation."""
@@ -410,19 +444,36 @@ class SchedulerService:
             except:
                 pass
 
-        scene_clip_paths = run_async(visuals_service.generate_scene_videos(
-            scenes=scenes,
-            project_dir=videos_dir,
-            lora_name=lora_name,
-            lora_strength=lora_strength,
-            style_key=style_key,
-            project_id=project.id,
-            video_index=video_idx,
-            job_id=job.id,
-            db=db,
-            on_progress=scene_progress,
-            is_cancelled=check_cancel,
-        ))
+        # Stash aspect/transition/dims on the module-level hook so
+        # visuals_service._resolve_scene_dims + per-scene regen see the
+        # project's current values without threading them through every
+        # function signature. Cleared in a finally block at the end of the job.
+        import app.config as _settings_module
+        _settings_module._active_visual_settings = {
+            "_width": target_w,
+            "_height": target_h,
+            "_aspect_str": aspect_str,
+        }
+        try:
+            scene_clip_paths = run_async(visuals_service.generate_scene_videos(
+                scenes=scenes,
+                project_dir=videos_dir,
+                lora_name=lora_name,
+                lora_strength=lora_strength,
+                style_key=style_key,
+                project_id=project.id,
+                video_index=video_idx,
+                job_id=job.id,
+                db=db,
+                on_progress=scene_progress,
+                is_cancelled=check_cancel,
+            ))
+        finally:
+            try:
+                if hasattr(_settings_module, "_active_visual_settings"):
+                    del _settings_module._active_visual_settings
+            except Exception:
+                pass
 
         # Save scene clips as visual assets
         for i, path in enumerate(scene_clip_paths):
@@ -512,15 +563,34 @@ class SchedulerService:
         # 6. Assemble final video
         output_path = final_dir / "final_video.mp4"
 
+        # Resolve transition settings from visual_settings. Default = none
+        # (preserves the original hard-cut behavior for projects that
+        # haven't opted into transitions).
+        transition_style = visual_settings.get("transition_style", "none")
+        transition_duration = float(visual_settings.get("transition_duration", 0.4) or 0.4)
+        audio_transition = visual_settings.get("audio_transition", "match_video")
+        if transition_style == "none" or transition_duration <= 0.0:
+            transition_duration = 0.0
+
+        # Caption font scaling: pass the output height so captions.py can
+        # auto-scale font_size for horizontal/HD aspects.
+        caption_settings_for_assembly = dict(caption_settings or {})
+        caption_settings_for_assembly["base_resolution_height"] = target_h
+
         success = video_service.assemble_video(
             scene_clips=scene_clip_paths,
             audio_assets=audio_assets,
             music_path=Path(music_path) if music_path else None,
             scenes=scenes,
-            caption_settings=caption_settings,
+            caption_settings=caption_settings_for_assembly,
             output_path=output_path,
             music_volume=audio_settings.get("music_volume", 0.15),
             voice_volume=audio_settings.get("voice_volume", 1.0),
+            target_width=target_w,
+            target_height=target_h,
+            transition_style=transition_style,
+            transition_duration=transition_duration,
+            audio_transition=audio_transition,
         )
         
         if success:
@@ -1147,15 +1217,35 @@ class SchedulerService:
             music_volume = float(visual_settings.get("music_volume", 0.15) or 0.15)
             voice_volume = 1.0
 
+            # Resolve aspect + transition settings so the reassemble honors
+            # the project's current visual_settings (not the ones at t2v time).
+            aspect_str = visual_settings.get("aspect_ratio", "vertical")
+            aspect_cfg = settings.ASPECT_RATIOS.get(aspect_str, settings.ASPECT_RATIOS["vertical"])
+            target_w = aspect_cfg["width"]
+            target_h = aspect_cfg["height"]
+            transition_style = visual_settings.get("transition_style", "none")
+            transition_duration = float(visual_settings.get("transition_duration", 0.4) or 0.4)
+            audio_transition = visual_settings.get("audio_transition", "match_video")
+            if transition_style == "none" or transition_duration <= 0.0:
+                transition_duration = 0.0
+
+            caption_settings_for_assembly = dict(caption_settings or {})
+            caption_settings_for_assembly["base_resolution_height"] = target_h
+
             ok = video_service.assemble_video(
                 scene_clips=scene_clips,
                 audio_assets=audio_assets,
                 music_path=music_path if music_path.exists() else None,
                 scenes=scenes,
-                caption_settings=caption_settings or {},
+                caption_settings=caption_settings_for_assembly,
                 output_path=output_path,
                 music_volume=music_volume,
                 voice_volume=voice_volume,
+                target_width=target_w,
+                target_height=target_h,
+                transition_style=transition_style,
+                transition_duration=transition_duration,
+                audio_transition=audio_transition,
             )
             if not ok:
                 return {"status": "error", "message": "Assembly failed"}
@@ -1163,6 +1253,98 @@ class SchedulerService:
             return {
                 "status": "success",
                 "final_path": str(output_path),
+            }
+        finally:
+            db.close()
+
+    def cleanup_intermediate_scenes(self, project_id: int, video_index: int) -> dict:
+        """Delete scene clips and audio chunks for a video to free disk space.
+
+        Keeps:
+            - The final assembled video (final/{idx}/final_video.mp4)
+            - The script row in the DB
+            - Any SEO metadata
+            - The video_overrides blob (per-video settings)
+
+        Deletes:
+            - videos/{idx}/scene_*.mp4 (per-scene ComfyUI t2v outputs)
+            - audio/{idx}/voice_*.mp3 (per-scene voiceover)
+            - audio/{idx}/background_music*.mp3 (background music)
+            - audio/{idx}/mixed_audio*.mp3 (pre-mixed audio if any)
+            - Any orphan _work/ temp dirs
+
+        After cleanup, the video's per-scene regen is LOCKED (no way to
+        regenerate individual scenes). User must click "Restore intermediate
+        scenes" (full re-render) to re-enable per-scene edits.
+
+        Returns:
+            {"status": "success", "bytes_freed": N, "files_deleted": M}
+            or {"status": "error", "message": "..."}
+        """
+        import shutil
+        db = SessionLocal()
+        try:
+            project = db.query(models.Project).get(project_id)
+            if not project:
+                return {"status": "error", "message": "Project not found"}
+
+            script = db.query(models.Script).filter(
+                models.Script.project_id == project_id,
+                models.Script.video_index == video_index,
+            ).order_by(models.Script.created_at.desc()).first()
+            if not script:
+                return {"status": "error", "message": "No script for this video"}
+
+            final_path = settings.PROJECTS_DIR / str(project_id) / "final" / str(video_index) / "final_video.mp4"
+            if not final_path.exists():
+                return {"status": "error", "message": "No final video to keep - build the video first"}
+
+            # Idempotency: if videos/{idx}/ is already gone, treat as already-cleaned
+            videos_dir = settings.PROJECTS_DIR / str(project_id) / "videos" / str(video_index)
+            audio_dir = settings.PROJECTS_DIR / str(project_id) / "audio" / str(video_index)
+            if not videos_dir.exists() and not audio_dir.exists():
+                return {"status": "success", "bytes_freed": 0, "files_deleted": 0, "already_cleaned": True}
+
+            bytes_freed = 0
+            files_deleted = 0
+            for target_dir in (videos_dir, audio_dir):
+                if not target_dir.exists():
+                    continue
+                # Walk and sum sizes
+                for p in target_dir.rglob("*"):
+                    if p.is_file():
+                        try:
+                            bytes_freed += p.stat().st_size
+                            files_deleted += 1
+                        except Exception:
+                            pass
+                # rmtree
+                try:
+                    shutil.rmtree(target_dir)
+                except Exception as e:
+                    print(f"[cleanup] Failed to remove {target_dir}: {e}", flush=True)
+
+            # Mark the script as cleaned. Stash a flag in video_overrides JSON
+            # so the front-end can show "intermediate scenes cleaned" badge
+            # and the regen buttons get disabled.
+            try:
+                vo = script.video_overrides or {}
+                if isinstance(vo, str):
+                    import json as _json
+                    vo = _json.loads(vo) if vo else {}
+                if not isinstance(vo, dict):
+                    vo = {}
+                vo["intermediate_cleaned"] = True
+                vo["intermediate_cleaned_at"] = datetime.utcnow().isoformat() + "Z"
+                script.video_overrides = vo
+                db.commit()
+            except Exception as e:
+                print(f"[cleanup] Failed to mark script as cleaned: {e}", flush=True)
+
+            return {
+                "status": "success",
+                "bytes_freed": bytes_freed,
+                "files_deleted": files_deleted,
             }
         finally:
             db.close()

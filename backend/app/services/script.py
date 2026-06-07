@@ -54,6 +54,13 @@ class ScriptService:
                               voice_custom: str = None, music_custom: str = None) -> Dict:
         """Generate a full script with scenes using Ollama."""
 
+        # Scene ladder. Pacing scales with duration:
+        #   - 30-120s: 6s per scene (current behavior, snappy Shorts rhythm)
+        #   - 180s:    22 scenes @ 8s (long-form, 4-act structure)
+        #   - 300s:    30 scenes @ 10s (long-form, 4-act structure)
+        # Long-form cap is 30 scenes to keep the LLM JSON output under
+        # ~10K tokens; some 7B/8B Ollama models cap output at 8K and will
+        # silently truncate a 50-scene response.
         if duration <= 30:
             num_scenes = 5
             per_scene = 6
@@ -66,9 +73,22 @@ class ScriptService:
         elif duration <= 90:
             num_scenes = 15
             per_scene = 6
-        else:
+        elif duration <= 120:
             num_scenes = 20
             per_scene = 6
+        elif duration <= 180:
+            num_scenes = 22
+            per_scene = 8
+        else:
+            num_scenes = 30
+            per_scene = 10
+
+        long_form = duration >= 180
+
+        # Narration word budget scales with per_scene. ~3.0-3.5 words/sec spoken.
+        # This replaces the hardcoded "MAX 18-22 words" rule.
+        narration_min = int(per_scene * 3.0)
+        narration_max = int(per_scene * 3.5)
 
         # Category-specific tone instructions
         if category.lower() in ("history", "historical"):
@@ -160,6 +180,27 @@ VISUAL CONTINUITY:
 - Keep the lighting palette consistent (don't jump from noon to night randomly)
 """
 
+        # 4-act structure for long-form (180s+). LLMs handle multi-act narratives
+        # better than a flat list of 30 scenes - it gives the scriptwriter a
+        # structural skeleton to follow so the story has rising tension, a
+        # clear climax, and a satisfying resolution instead of a wandering list.
+        long_form_block = ""
+        if long_form:
+            # Divide num_scenes into 4 acts (setup / development / climax / resolution).
+            # Last scene is always the closing shot (resolution + CTA).
+            act_setup_end = max(1, num_scenes // 4)
+            act_dev_end = max(act_setup_end + 1, num_scenes // 2)
+            act_climax_end = max(act_dev_end + 1, (num_scenes * 3) // 4)
+            long_form_block = f"""
+
+LONG-FORM 4-ACT STRUCTURE (this is a {duration}s long-form video, plan acts carefully):
+- ACT 1 - SETUP (scenes 1-{act_setup_end}): Establish the world, the era, the key players. Visual anchor #1 introduced. Tone is immersive and inviting.
+- ACT 2 - DEVELOPMENT (scenes {act_setup_end+1}-{act_dev_end}): Build the central conflict or curiosity. Introduce complications, deeper details, escalating tension. Visual anchor #2 introduced.
+- ACT 3 - CLIMAX (scenes {act_dev_end+1}-{act_climax_end}): The peak emotional or dramatic moment. Most intense visuals, fastest camera moves, strongest contrast. Visual anchor #3 introduced.
+- ACT 4 - RESOLUTION (scenes {act_climax_end+1}-{num_scenes}): Payoff + reflection. The final scene ({num_scenes}) is a slow, contemplative closing shot with the CTA narration. Pace this act with longer visual dwell time so the viewer feels the story has resolved.
+
+Make sure each act has a clear tonal shift (not just more of the same)."""
+
         prompt = f"""Write a YouTube Shorts script about: {topic}
 Category: {category}
 Target Duration: {duration} seconds
@@ -175,7 +216,7 @@ Requirements:
 2. SCENES: Include EXACTLY {num_scenes} scenes, each {per_scene} seconds (total ~{duration}s). Each scene must have:
    - scene_number (1 to {num_scenes})
    - visual_description (FOLLOW THE TEMPLATE IN SYSTEM PROMPT — single subject, one action, one camera move, specific lighting; NEVER use montage/calendar/archival/etc.)
-   - narration_text (MAX 18-22 words, ~6 seconds spoken)
+   - narration_text ({narration_min}-{narration_max} words, fits ~{per_scene} seconds spoken)
    - duration_seconds ({per_scene})
 3. VISUAL CONTINUITY: Pick 2-3 recurring visual anchors (e.g., "stadium at twilight", "vintage leather ball", "lone player") and use them across multiple scenes
 4. CAMERA VARIETY: Each scene must use a DIFFERENT camera move from this set: slow push-in, slow pan, slow dolly forward, slow orbit, slow zoom, static wide, slow tilt up
@@ -198,6 +239,8 @@ Requirements:
    - hashtags: 10 relevant hashtags
    - call_to_action: short (e.g., "Like and subscribe for more!")
    - music_prompt: comma-separated ACE 1.5 music description (genre, mood, instruments, BPM, key). Example for "Epic": "epic, cinematic, orchestral, dramatic, powerful, 100 BPM, E minor"
+
+{long_form_block}
 
 Respond ONLY in valid JSON. No markdown, no commentary, no code blocks — just raw JSON:
 
@@ -228,6 +271,11 @@ Respond ONLY in valid JSON. No markdown, no commentary, no code blocks — just 
                 response = response.split("```")[1].split("```")[0].strip()
 
             script_data = json.loads(response)
+            # Truncation guard: long-form LLMs (especially 7B/8B with 8K
+            # output cap) may return fewer scenes than asked. If we're
+            # missing scenes, top up with auto-generated filler scenes
+            # so the assembly pipeline has the right count.
+            script_data = self._topup_scenes(script_data, num_scenes, per_scene, topic, category)
             # ENFORCE: explicit CTA at end of last scene's narration.
             # Many LLMs end the script abruptly after the reflective wrap-up
             # and forget the call-to-action. We append/strengthen it here so
@@ -237,6 +285,46 @@ Respond ONLY in valid JSON. No markdown, no commentary, no code blocks — just 
         except json.JSONDecodeError:
             # Fallback: return raw text structured manually
             return self._fallback_parse_script(response, topic)
+
+    def _topup_scenes(self, script_data: Dict, num_scenes: int, per_scene: int,
+                      topic: str, category: str) -> Dict:
+        """Pad scenes to num_scenes if LLM truncated (common at 22-30 scene requests).
+
+        Adds generic-but-valid filler scenes with proper structure so the
+        downstream pipeline (t2v, audio, assembly) has the expected count.
+        Each filler is a slow contemplative shot matching the topic's tone.
+        """
+        scenes = script_data.get("scenes") or []
+        if not isinstance(scenes, list) or len(scenes) >= num_scenes:
+            return script_data
+        if len(scenes) < 3:
+            return script_data  # too few to even start a real narrative
+
+        existing_nums = {s.get("scene_number") for s in scenes if isinstance(s, dict)}
+        camera_moves = [
+            "Slow pan across", "Slow push-in on", "Static wide shot of",
+            "Slow orbit around", "Slow dolly forward toward",
+        ]
+        last_idx = len(scenes)
+        for i in range(last_idx, num_scenes):
+            move = camera_moves[i % len(camera_moves)]
+            cam_desc = (
+                f"{move} a contemplative view of the {topic} subject, "
+                f"matching the visual style of the previous scenes, soft "
+                f"lighting, cinematic mood"
+            )
+            narration = (
+                f"Continuing the story of {topic} as we explore another "
+                f"fascinating detail in this ongoing journey."
+            )
+            scenes.append({
+                "scene_number": i + 1,
+                "visual_description": cam_desc,
+                "narration_text": narration,
+                "duration_seconds": per_scene,
+            })
+        script_data["scenes"] = scenes
+        return script_data
 
     def _enforce_final_cta(self, script_data: Dict, topic: str, category: str) -> Dict:
         """Guarantee the last scene's narration_text ends with an explicit

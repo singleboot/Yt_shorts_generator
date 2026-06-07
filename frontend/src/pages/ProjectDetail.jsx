@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Sparkles, Send, CheckCircle, AlertCircle, Loader2, Youtube, ChevronDown, ChevronUp, Hash, Play, Globe, Clock, Archive, FileText, Video, ChevronLeft, ChevronRight, Palette, Mic, Music, Volume2, Square, Captions, Type, Plus } from 'lucide-react';
+import { ArrowLeft, Sparkles, Send, CheckCircle, AlertCircle, Loader2, Youtube, ChevronDown, ChevronUp, Hash, Play, Globe, Clock, Archive, FileText, Video, ChevronLeft, ChevronRight, Palette, Mic, Music, Volume2, Square, Captions, Type, Plus, Brush, Trash2, Blend } from 'lucide-react';
 import api from '../api/client';
 import axios from 'axios';
 import VideoCard from './VideoCard';
@@ -9,11 +9,38 @@ import { CATEGORIES, SUBJECTS } from '../constants/categories';
 import { AI_STYLES, VOICES, MUSIC_GENRES, STYLE_LORA_PATHS } from '../constants/production';
 
 const DURATIONS = [
-  { label: '30s', value: 30, scenes: 5 },
-  { label: '45s', value: 45, scenes: 7 },
-  { label: '60s', value: 60, scenes: 10 },
-  { label: '90s', value: 90, scenes: 15 },
-  { label: '120s', value: 120, scenes: 20 },
+  { label: '30s',  value: 30,  scenes: 5,  perScene: 6,  longForm: false, estMin: 5  },
+  { label: '45s',  value: 45,  scenes: 7,  perScene: 6,  longForm: false, estMin: 8  },
+  { label: '60s',  value: 60,  scenes: 10, perScene: 6,  longForm: false, estMin: 12 },
+  { label: '90s',  value: 90,  scenes: 15, perScene: 6,  longForm: false, estMin: 18 },
+  { label: '120s', value: 120, scenes: 20, perScene: 6,  longForm: false, estMin: 24 },
+  { label: '180s', value: 180, scenes: 22, perScene: 8,  longForm: true,  estMin: 30 },
+  { label: '300s', value: 300, scenes: 30, perScene: 10, longForm: true,  estMin: 45 },
+];
+
+// Aspect ratio options. Mirrors ASPECT_RATIOS in backend config.py.
+const ASPECT_OPTIONS = [
+  { value: 'vertical',       label: 'Vertical 9:16',      dims: '720x1280',   vram: '~7 GB',  longForm: false, hint: 'YouTube Shorts, TikTok, Reels' },
+  { value: 'horizontal',     label: 'Horizontal 16:9',   dims: '1280x720',   vram: '~7 GB',  longForm: false, hint: 'YouTube standard' },
+  { value: 'horizontal_hd',  label: 'Horizontal HD 16:9',dims: '1920x1080',  vram: '~12 GB', longForm: true,  hint: 'Auto-shortens to 5s/scene' },
+];
+
+// Transition style options. Mirrors TRANSITION_STYLES in backend config.py.
+const TRANSITION_OPTIONS = [
+  { value: 'none',         label: 'None (hard cut)' },
+  { value: 'fade',         label: 'Fade' },
+  { value: 'fadeblack',    label: 'Fade to black' },
+  { value: 'fadewhite',    label: 'Fade to white' },
+  { value: 'dissolve',     label: 'Dissolve' },
+  { value: 'slide_left',   label: 'Slide left' },
+  { value: 'slide_right',  label: 'Slide right' },
+  { value: 'slide_up',     label: 'Slide up' },
+  { value: 'slide_down',   label: 'Slide down' },
+  { value: 'wipe_left',    label: 'Wipe left' },
+  { value: 'wipe_right',   label: 'Wipe right' },
+  { value: 'zoom_in',      label: 'Zoom in' },
+  { value: 'circle_open',  label: 'Circle open' },
+  { value: 'circle_close', label: 'Circle close' },
 ];
 
 const PER_PAGE = 8;
@@ -94,6 +121,12 @@ function ProjectDetail() {
   const [musicCustom, setMusicCustom] = useState('');    // custom ACE tag string
   const [trendingNowLoading, setTrendingNowLoading] = useState(false);
 
+  // Aspect ratio + transitions (long-form / horizontal video support)
+  const [aspectRatio, setAspectRatio] = useState('vertical');
+  const [transitionStyle, setTransitionStyle] = useState('none');
+  const [transitionDuration, setTransitionDuration] = useState(0.4);
+  const [audioTransition, setAudioTransition] = useState('match_video');
+
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 4000);
@@ -144,7 +177,15 @@ function ProjectDetail() {
       (async () => {
         autoSaveRef.current = true;
         try {
-          const newVS = { ...(project?.visual_settings || {}), ai_style: selectedStyle, lora_strength: loraStrength };
+          const newVS = {
+            ...(project?.visual_settings || {}),
+            ai_style: selectedStyle,
+            lora_strength: loraStrength,
+            aspect_ratio: aspectRatio,
+            transition_style: transitionStyle,
+            transition_duration: transitionDuration,
+            audio_transition: audioTransition,
+          };
           const newASRaw = { ...(project?.audio_settings || {}), voice_id: selectedVoice, voice_custom: voiceCustom || undefined, music_genre: selectedMusic, music_custom: musicCustom || undefined };
           const newAS = Object.fromEntries(Object.entries(newASRaw).filter(([, v]) => v !== undefined));
           const newCS = { style: captionStyle, font: captionFont, font_size: captionFontSize, color: captionColor, stroke_color: captionStrokeColor, stroke_width: captionStrokeWidth, animation: captionAnimation };
@@ -235,6 +276,11 @@ function ProjectDetail() {
             setSelectedMusic(as.music_genre || 'ambient');
             setVoiceCustom(as.voice_custom || '');
             setMusicCustom(as.music_custom || '');
+            // Aspect ratio + transitions (with safe defaults for legacy projects)
+            setAspectRatio(vs.aspect_ratio || 'vertical');
+            setTransitionStyle(vs.transition_style || 'none');
+            setTransitionDuration(vs.transition_duration ?? 0.4);
+            setAudioTransition(vs.audio_transition || 'match_video');
             const cs = projRes.data.caption_settings || {};
             setCaptionStyle(cs.style || 'standard');
             setCaptionFont(cs.font || 'Arial-Bold');
@@ -505,6 +551,29 @@ function ProjectDetail() {
     }
   };
 
+  const handleCleanScenes = async (videoIndex) => {
+    const bytesApprox = 100;  // hint for the prompt
+    if (!window.confirm(
+      `Clean intermediate scenes for video #${videoIndex + 1}?\n\n` +
+      `This deletes the per-scene ComfyUI clips and voiceover chunks from disk ` +
+      `to free up ~${bytesApprox}MB+ per video. The final video and script ` +
+      `are kept. After cleanup, per-scene regeneration on this video will be ` +
+      `disabled until you re-render the full video.`
+    )) return;
+    try {
+      const res = await api.post(`/projects/${id}/videos/${videoIndex}/clean-scenes`);
+      if (res.data.status === 'success') {
+        const mb = (res.data.bytes_freed / 1024 / 1024).toFixed(1);
+        showToast(`Cleaned ${res.data.files_deleted} files, freed ${mb} MB`);
+        loadProject();
+      } else {
+        showToast(res.data.message || 'Clean failed', 'warning');
+      }
+    } catch (e) {
+      showToast('Failed to clean scenes', 'error');
+    }
+  };
+
   const handleCancelVideos = async () => {
     try {
       await api.post(`/projects/${id}/cancel-all`);
@@ -517,7 +586,15 @@ function ProjectDetail() {
 
   const saveProductionSettings = async () => {
     try {
-      const newVS = { ...(project.visual_settings || {}), ai_style: selectedStyle, lora_strength: loraStrength };
+      const newVS = {
+        ...(project.visual_settings || {}),
+        ai_style: selectedStyle,
+        lora_strength: loraStrength,
+        aspect_ratio: aspectRatio,
+        transition_style: transitionStyle,
+        transition_duration: transitionDuration,
+        audio_transition: audioTransition,
+      };
       const newASRaw = { ...(project.audio_settings || {}), voice_id: selectedVoice, voice_custom: voiceCustom || undefined, music_genre: selectedMusic, music_custom: musicCustom || undefined };
       const newAS = Object.fromEntries(Object.entries(newASRaw).filter(([, v]) => v !== undefined));
       await api.put(`/projects/${id}`, { visual_settings: newVS, audio_settings: newAS });
@@ -529,7 +606,16 @@ function ProjectDetail() {
 
   const handleSaveProject = async () => {
     try {
-      const newVS = { ...(project.visual_settings || {}), ai_style: selectedStyle, lora_strength: loraStrength, total_duration: duration };
+      const newVS = {
+        ...(project.visual_settings || {}),
+        ai_style: selectedStyle,
+        lora_strength: loraStrength,
+        total_duration: duration,
+        aspect_ratio: aspectRatio,
+        transition_style: transitionStyle,
+        transition_duration: transitionDuration,
+        audio_transition: audioTransition,
+      };
       const newASRaw = { ...(project.audio_settings || {}), voice_id: selectedVoice, voice_custom: voiceCustom || undefined, music_genre: selectedMusic, music_custom: musicCustom || undefined };
       const newAS = Object.fromEntries(Object.entries(newASRaw).filter(([, v]) => v !== undefined));
       const newCS = { style: captionStyle, font: captionFont, font_size: captionFontSize, color: captionColor, stroke_color: captionStrokeColor, stroke_width: captionStrokeWidth, animation: captionAnimation };
@@ -1015,24 +1101,116 @@ function ProjectDetail() {
 
                 <div>
                   <label className="block text-xs font-semibold text-[#9AA0A6] uppercase tracking-wider mb-2 text-right">Duration</label>
-                  <div className="flex gap-1">
+                  <div className="flex gap-1 flex-wrap">
                     {DURATIONS.map((d) => (
                       <button
                         key={d.value}
                         onClick={() => setDuration(d.value)}
-                        className={`px-3 py-2 rounded-lg text-xs font-semibold transition-all duration-150 ${
+                        className={`relative px-3 py-2 rounded-lg text-xs font-semibold transition-all duration-150 ${
                           duration === d.value
                             ? 'bg-[#C6F11D] text-[#050608]'
                             : 'bg-[#0E1116] text-[#9AA0A6] hover:text-[#F5F5F5] border border-[#252A33]'
                         }`}
                       >
                         {d.label}
+                        {d.longForm && (
+                          <span className="absolute -top-1.5 -right-1.5 px-1.5 py-0.5 rounded-full text-[8px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                            LONG
+                          </span>
+                        )}
                       </button>
                     ))}
                   </div>
                   <p className="text-[10px] text-[#5F6772] text-right mt-1">
-                    {currentDuration.scenes} scenes
+                    {currentDuration.scenes} scenes · ~{currentDuration.estMin} min render
                   </p>
+                </div>
+              </div>
+
+              {/* Aspect ratio + Transitions row */}
+              <div className="border-t border-[#252A33] pt-4 grid grid-cols-2 gap-4">
+                <div>
+                  <label className="flex items-center gap-1.5 text-xs font-semibold text-[#9AA0A6] uppercase tracking-wider mb-2">
+                    <Square className="h-3.5 w-3.5" />
+                    Aspect Ratio
+                  </label>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {ASPECT_OPTIONS.map((a) => (
+                      <button
+                        key={a.value}
+                        onClick={() => setAspectRatio(a.value)}
+                        title={`${a.dims} · ${a.vram} · ${a.hint}`}
+                        className={`px-2 py-2 rounded-lg text-[10px] font-semibold transition-all duration-150 ${
+                          aspectRatio === a.value
+                            ? 'bg-[#C6F11D] text-[#050608]'
+                            : 'bg-[#0E1116] text-[#9AA0A6] hover:text-[#F5F5F5] border border-[#252A33]'
+                        }`}
+                      >
+                        <div className="leading-tight">{a.label}</div>
+                        <div className={`text-[9px] mt-0.5 ${aspectRatio === a.value ? 'text-[#050608]/70' : 'text-[#5F6772]'}`}>
+                          {a.dims}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-[#5F6772] mt-1.5">
+                    {ASPECT_OPTIONS.find(a => a.value === aspectRatio)?.hint}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="flex items-center gap-1.5 text-xs font-semibold text-[#9AA0A6] uppercase tracking-wider mb-2">
+                    <Blend className="h-3.5 w-3.5" />
+                    Transition
+                  </label>
+                  <div className="flex gap-2">
+                    <select
+                      value={transitionStyle}
+                      onChange={(e) => setTransitionStyle(e.target.value)}
+                      className="flex-1 px-2 py-2 rounded-lg text-xs bg-[#0E1116] border border-[#252A33] text-[#F5F5F5]"
+                    >
+                      {TRANSITION_OPTIONS.map((t) => (
+                        <option key={t.value} value={t.value}>{t.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <input
+                      type="range"
+                      min="0"
+                      max="1.5"
+                      step="0.1"
+                      value={transitionDuration}
+                      onChange={(e) => setTransitionDuration(parseFloat(e.target.value))}
+                      disabled={transitionStyle === 'none'}
+                      className="flex-1 accent-[#C6F11D] disabled:opacity-30"
+                    />
+                    <span className="text-[10px] text-[#5F6772] w-12 text-right">
+                      {transitionStyle === 'none' ? '—' : `${transitionDuration.toFixed(1)}s`}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="text-[10px] text-[#5F6772]">Audio:</span>
+                    {['match_video', 'none'].map((opt) => (
+                      <button
+                        key={opt}
+                        onClick={() => setAudioTransition(opt)}
+                        disabled={transitionStyle === 'none'}
+                        className={`px-2 py-0.5 rounded text-[10px] font-medium transition-all ${
+                          audioTransition === opt
+                            ? 'bg-[#C6F11D] text-[#050608]'
+                            : 'bg-[#0E1116] text-[#9AA0A6] border border-[#252A33] disabled:opacity-30'
+                        }`}
+                      >
+                        {opt === 'match_video' ? 'Match video' : 'Hard cut'}
+                      </button>
+                    ))}
+                  </div>
+                  {transitionStyle !== 'none' && (
+                    <p className="text-[10px] text-amber-400/80 mt-1.5">
+                      {currentDuration.scenes - 1} cuts × {transitionDuration.toFixed(1)}s = {((currentDuration.scenes - 1) * transitionDuration).toFixed(1)}s trimmed
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -1388,6 +1566,7 @@ function ProjectDetail() {
                 onRegenScript={phase === 'scripts' ? handleRegenScript : null}
                 onGenerateVideo={phase === 'scripts' ? handleGenerateSingleVideo : null}
                 onRemovePlaceholder={generatingScripts ? handleRemovePlaceholder : null}
+                onCleanScenes={phase === 'videos' ? () => handleCleanScenes(video.index) : null}
               />
             ))}
           </div>
