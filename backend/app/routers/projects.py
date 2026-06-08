@@ -326,7 +326,7 @@ def list_project_videos(project_id: int, db: Session = Depends(get_db)):
                 "id": script.id if script else None,
                 "title": script.title if script else None,
                 "content": script.content[:500] if script and script.content else None,
-                "scenes": script.scenes if script and script.scenes else [],
+                "scenes": (script.scenes if not isinstance(script.scenes, str) else (__import__("json").loads(script.scenes) if script.scenes else [])) if script and script.scenes else [],
                 "hashtags": script.hashtags if script else None,
                 "global_serial": script.global_serial if script else None,
                 "created_at": script.created_at.isoformat() if script and script.created_at else None,
