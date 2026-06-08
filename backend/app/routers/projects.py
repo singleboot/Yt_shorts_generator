@@ -613,7 +613,7 @@ def trending_now(project_id: int, body: dict = {}, db: Session = Depends(get_db)
     if isinstance(schedule_settings, str): schedule_settings = _json.loads(schedule_settings) if schedule_settings else {}
     visual_settings = project.visual_settings
     if isinstance(visual_settings, str): visual_settings = _json.loads(visual_settings) if visual_settings else {}
-    duration = visual_settings.get("total_duration", 45)
+    duration = max(visual_settings.get("total_duration", 45) - (settings.OUTRO_DURATION_SECONDS or 0), 6)
     video_count = schedule_settings.get("video_count", 1) if isinstance(schedule_settings, dict) else 1
 
     results = []
@@ -760,7 +760,7 @@ def generate_scripts(project_id: int, body: GenerateScriptsRequest = Body(Genera
     visual_settings = project.visual_settings
     if isinstance(visual_settings, str):
         visual_settings = _json.loads(visual_settings) if visual_settings else {}
-    duration = visual_settings.get("total_duration", 45)
+    duration = max(visual_settings.get("total_duration", 45) - (settings.OUTRO_DURATION_SECONDS or 0), 6)
     video_count = schedule_settings.get("video_count", 1) if isinstance(schedule_settings, dict) else 1
     audio_settings = project.audio_settings
     if isinstance(audio_settings, str):
@@ -908,7 +908,7 @@ def add_new_videos(project_id: int, body: AddVideosRequest = Body(AddVideosReque
     visual_settings = project.visual_settings
     if isinstance(visual_settings, str):
         visual_settings = _json.loads(visual_settings) if visual_settings else {}
-    duration = visual_settings.get("total_duration", 45)
+    duration = max(visual_settings.get("total_duration", 45) - (settings.OUTRO_DURATION_SECONDS or 0), 6)
     audio_settings = project.audio_settings
     if isinstance(audio_settings, str):
         audio_settings = _json.loads(audio_settings) if audio_settings else {}
@@ -1063,7 +1063,7 @@ def regenerate_script(project_id: int, video_index: int, db: Session = Depends(g
     visual_settings = project.visual_settings
     if isinstance(visual_settings, str):
         visual_settings = _json.loads(visual_settings) if visual_settings else {}
-    duration = visual_settings.get("total_duration", 45)
+    duration = max(visual_settings.get("total_duration", 45) - (settings.OUTRO_DURATION_SECONDS or 0), 6)
     video_count = schedule_settings.get("video_count", 1) if isinstance(schedule_settings, dict) else 1
     audio_settings = project.audio_settings
     if isinstance(audio_settings, str):

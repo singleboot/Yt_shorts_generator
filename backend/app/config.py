@@ -78,6 +78,17 @@ class Settings(BaseSettings):
     
     # LoRA Settings
     DEFAULT_LORA_STRENGTH: float = 0.8
+
+    # Outro: append a 6s "like & subscribe" clip to the end of every final
+    # video. The script generator reserves OUTRO_DURATION_SECONDS of the user-
+    # requested total so the AI content fills duration - outro. The video
+    # assembly normalizes the outro to the project's aspect ratio and concat-
+    # appends it after the last AI scene with a hard cut. Set the path to None
+    # to disable the outro (videos will be built from AI content only).
+    LIKE_SUBSCRIBE_OUTRO_PATH: Path = Path(
+        r"F:\MY APP\AI SHORTS CREATOR\AI SHORTS CREATOR V1\like-and-subscribe.mov"
+    )
+    OUTRO_DURATION_SECONDS: int = 6
     
     # Style to LoRA mapping (filename relative to loras/ltx2/)
     STYLE_LORAS: dict = {

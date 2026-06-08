@@ -61,22 +61,32 @@ class ScriptService:
         # Long-form cap is 30 scenes to keep the LLM JSON output under
         # ~10K tokens; some 7B/8B Ollama models cap output at 8K and will
         # silently truncate a 50-scene response.
-        if duration <= 30:
+        #
+        # OUTRO RESERVE: video.py appends a 6s "like & subscribe" outro to
+        # the final video. We subtract that here so the AI content fills
+        # (duration - 6)s and the final video is still the user-requested
+        # total. Floor at 6s of AI content so we always have at least one
+        # meaningful scene.
+        from app.config import settings as _settings
+        outro_seconds = getattr(_settings, "OUTRO_DURATION_SECONDS", 0) or 0
+        effective_duration = max(duration - outro_seconds, 6)
+
+        if effective_duration <= 30:
             num_scenes = 5
             per_scene = 6
-        elif duration <= 45:
+        elif effective_duration <= 45:
             num_scenes = 7
             per_scene = 6
-        elif duration <= 60:
+        elif effective_duration <= 60:
             num_scenes = 10
             per_scene = 6
-        elif duration <= 90:
+        elif effective_duration <= 90:
             num_scenes = 15
             per_scene = 6
-        elif duration <= 120:
+        elif effective_duration <= 120:
             num_scenes = 20
             per_scene = 6
-        elif duration <= 180:
+        elif effective_duration <= 180:
             num_scenes = 22
             per_scene = 8
         else:

@@ -1182,6 +1182,10 @@ class SchedulerService:
             base_dir = settings.PROJECTS_DIR / str(project_id)
             videos_dir = base_dir / "videos" / str(video_index)
             audio_dir = base_dir / "audio" / str(video_index)
+            # Fallback: newer projects store audio directly under the video index dir
+            audio_dir_fallback = base_dir / str(video_index)
+            if not audio_dir.exists() and audio_dir_fallback.exists():
+                audio_dir = audio_dir_fallback
             final_dir = base_dir / "final" / str(video_index)
             final_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1199,9 +1203,9 @@ class SchedulerService:
             for i in range(len(scenes)):
                 a = audio_dir / f"voice_{i+1:02d}.mp3"
                 if a.exists():
-                    audio_assets.append({"path": str(a), "duration_seconds": scenes[i].get("duration_seconds", 8)})
+                    audio_assets.append({"local_path": str(a), "duration_seconds": scenes[i].get("duration_seconds", 8)})
                 else:
-                    audio_assets.append({"path": None, "duration_seconds": scenes[i].get("duration_seconds", 8)})
+                    audio_assets.append({"local_path": None, "duration_seconds": scenes[i].get("duration_seconds", 8)})
 
             music_path = audio_dir / "background_music.mp3"
             if not music_path.exists():

@@ -293,14 +293,13 @@ function ProjectDetail() {
       }
       if (vidRes && vidRes.data) {
         // Don't overwrite local placeholders while scripts are generating
-        if (!generatingScriptsRef.current) {
-          const incomingVideos = vidRes.data.videos || [];
-          setVideos(incomingVideos);
+        const incomingVideos = vidRes.data.videos || [];
+        setVideos(incomingVideos);
           // Always derive videoCount from the actual list length - never trust
           // the backend's video_count field (it can drift from schedule_settings).
           // Fall back to the backend's hint only if the list is empty.
-          setVideoCount(incomingVideos.length > 0 ? incomingVideos.length : (vidRes.data.video_count || 1));
-          // Detect phase based on whether any video has a job (t2v started)
+        setVideoCount(incomingVideos.length > 0 ? incomingVideos.length : (vidRes.data.video_count || 1));
+        // Detect phase based on whether any video has a job (t2v started)
           const hasJob = (vidRes.data.videos || []).some(v => v.job);
           const hasScript = (vidRes.data.videos || []).some(v => v.script);
           let newPhase;
@@ -322,7 +321,6 @@ function ProjectDetail() {
             prevPhaseRef.current = newPhase;
           }
           setPhase(newPhase);
-        }
       }
     } catch (e) {
       console.error(e);
@@ -460,10 +458,21 @@ function ProjectDetail() {
       const res = await api.post(`/projects/${id}/generate-scripts`, payload);
       if (res.data.status === 'success') {
         showToast(`+ ${res.data.scripts.length} new script(s) ready. Review, then click Generate Video on each.`);
-        generatingScriptsRef.current = false;
-        setGeneratingScripts(false);
+        // Keep generatingScriptsRef true through loadProject() so the
+        // phase guard forces 'scripts' mode. Without this, loadProject()
+        // sees hasJob=true from older videos and switches to 'videos',
+        // hiding the Generate Video button.
         setPhase('scripts');
         setPage(1);
+        // Update videos from the API response directly so the real
+        // script cards show immediately, even before the next poll.
+        setVideos(res.data.scripts.map(s => ({
+          index: s.index,
+          script: s,
+          upload: null,
+          job: null,
+          overrides: null,
+        })));
         await loadProject();
       }
     } catch (e) {
@@ -851,36 +860,26 @@ function ProjectDetail() {
           <p className="text-sm font-semibold text-[#F5F5F5]">{readyCount}/{videoCount} videos ready</p>
           <p className="text-xs text-[#9AA0A6]">{postedCount} posted{archivedCount > 0 ? ` · ${archivedCount} archived` : ''}</p>
           <div className="flex items-center gap-2 flex-wrap justify-end">
-            {(() => {
-              const hasScripts = videos.filter(v => v.script).length > 0;
-              const hasVideos = videos.filter(v => v.upload || v.job).length > 0;
-              const label = generatingScripts
-                ? 'Cancel'
-                : generating
-                ? 'Cancel'
-                : !hasScripts
-                ? `Generate ${genCount} Scripts`
-                : !hasVideos
-                ? `Generate ${genCount} Videos`
-                : `+ Add ${genCount} New Videos`;
-              const Icon = generatingScripts || generating
-                ? Loader2
-                : !hasScripts
-                ? FileText
-                : !hasVideos
-                ? Video
-                : Plus;
-              return (
-                <button
-                  onClick={handleGenerateOrCancel}
-                  disabled={!generatingScripts && !generating && trendingNowLoading || (!generatingScripts && !generating && sourceType === 'topic' ? (!(topic||'').trim() || !category) : false)}
-                  className={`neo-btn-primary flex items-center gap-1.5 px-3 py-1.5 text-[11px] ${generatingScripts || generating ? 'border-[#FF5757] text-[#FF5757] hover:bg-[rgba(255,87,87,0.1)]' : ''}`}
-                >
-                  <Icon className={`h-3 w-3 ${generatingScripts || generating ? 'animate-spin' : ''}`} />
-                  {label}
-                </button>
-              );
-            })()}
+            {/* Create Script button — always visible */}
+            <button
+              onClick={generatingScripts ? handleCancelScripts : handleAddNewVideos}
+              disabled={generatingScripts ? false : !!(trendingNowLoading || (sourceType === 'topic' && (!(topic||'').trim() || !category)))}
+              className={`neo-btn-primary flex items-center gap-1.5 px-3 py-1.5 text-[11px] ${generatingScripts ? 'border-[#FF5757] text-[#FF5757] hover:bg-[rgba(255,87,87,0.1)]' : ''}`}
+            >
+              {generatingScripts ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
+              {generatingScripts ? 'Cancel' : `Create Script (${genCount})`}
+            </button>
+            {/* Create Video button — always visible (generates all pending scripts) */}
+            {(
+              <button
+                onClick={generating ? handleCancelVideos : handleGenerateVideos}
+                disabled={generating ? false : videos.filter(v => v.script && !v.job).length === 0}
+                className={`neo-btn-primary flex items-center gap-1.5 px-3 py-1.5 text-[11px] ${generating ? 'border-[#FF5757] text-[#FF5757] hover:bg-[rgba(255,87,87,0.1)]' : ''}`}
+              >
+                {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Video className="h-3 w-3" />}
+                {generating ? 'Cancel' : `Create Video (${videos.filter(v => v.script && !v.job).length})`}
+              </button>
+            )}
             {readyCount > 0 && (
               <button
                 onClick={handlePostAll}
@@ -1589,7 +1588,7 @@ function ProjectDetail() {
                 onEdit={() => setEditingVideo(video)}
                 mode={phase === 'scripts' ? 'script' : 'video'}
                 onRegenScript={phase === 'scripts' ? handleRegenScript : null}
-                onGenerateVideo={phase === 'scripts' ? handleGenerateSingleVideo : null}
+                onGenerateVideo={!video.job || video.job.status === 'cancelled' || video.job.status === 'failed' ? handleGenerateSingleVideo : null}
                 onRemovePlaceholder={generatingScripts ? handleRemovePlaceholder : null}
                 onCleanScenes={phase === 'videos' ? () => handleCleanScenes(video.index) : null}
               />

@@ -116,6 +116,15 @@ class VideoService:
                 print(f"Subtitle generation failed (continuing without): {e}")
                 ass_path = None
 
+            # 4b. Append the "like & subscribe" outro (6s) to the video stream.
+            # Done before mux so the final ffmpeg call sees one continuous
+            # video. The mixed audio track is NOT extended - the outro plays
+            # its own audio for the last 6s, which is how real YouTube
+            # outros work.
+            raw_video = self._maybe_append_outro(
+                raw_video, work_dir, target_width, target_height
+            )
+
             # 5. Mux everything: video + audio + subtitles
             success = self._mux_final(raw_video, mixed_audio_path, ass_path, output_path)
 
@@ -439,6 +448,109 @@ class VideoService:
         except subprocess.CalledProcessError as e:
             print(f"Audio concat failed: {e}")
             return Path(audio_assets[0]["local_path"]) if audio_assets else None
+
+    def _normalize_outro(self, outro_path: Path, target_w: int, target_h: int,
+                         work_dir: Path) -> Path:
+        """Re-encode the ProRes outro to match the project's target H.264/AAC.
+
+        The source `like-and-subscribe.mov` is ProRes 1080x1920 @ 25fps. We
+        scale + letterbox to the project's target aspect (vertical / horizontal
+        / horizontal_hd) and re-encode video to H.264 so it can be `-c copy`
+        concatenated with the AI scenes stream.
+
+        Note: the source `.mov` typically contains only a video track (no real
+        audio; the second "stream" is usually a ProRes timecode track). We
+        therefore skip audio encoding rather than fail when AAC is asked to
+        encode nothing.
+        """
+        work_dir.mkdir(parents=True, exist_ok=True)
+        out = work_dir / "outro_normalized.mp4"
+        vf = (f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+              f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:black,fps=25")
+        # Detect whether the source actually has an audio stream. ffmpeg
+        # otherwise complains about `-b:a` being unused.
+        has_audio = False
+        try:
+            probe = subprocess.run(
+                [
+                    "ffprobe", "-v", "error",
+                    "-select_streams", "a",
+                    "-show_entries", "stream=index",
+                    "-of", "csv=p=0",
+                    str(outro_path),
+                ],
+                capture_output=True, text=True, timeout=15,
+            )
+            has_audio = bool(probe.stdout.strip())
+        except Exception:
+            has_audio = False
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(outro_path),
+            "-vf", vf,
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            "-pix_fmt", "yuv420p",
+        ]
+        if has_audio:
+            cmd += ["-c:a", "aac", "-b:a", "192k", "-ar", "44100"]
+        else:
+            # No audio in the source — write a video-only mp4 so it still
+            # concats cleanly with the AI scenes (which carry their own audio).
+            cmd += ["-an"]
+        cmd.append(str(out))
+        subprocess.run(cmd, check=True, capture_output=True)
+        return out
+
+    def _concat_with_outro(self, main_video: Path, outro_video: Path,
+                           output: Path) -> Path:
+        """Hard-cut append the outro to the end of the main video stream.
+
+        Both inputs must already be normalized to identical codec/params
+        (see `_normalize_outro`); this uses ffmpeg's concat demuxer with
+        `-c copy` for a fast, lossless join.
+        """
+        list_file = output.parent / "_concat_with_outro.txt"
+        with open(list_file, "w") as f:
+            f.write(f"file '{Path(main_video).resolve().as_posix()}'\n")
+            f.write(f"file '{Path(outro_video).resolve().as_posix()}'\n")
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", str(list_file),
+            "-c", "copy",
+            str(output),
+        ]
+        subprocess.run(cmd, check=True, capture_output=True)
+        return output
+
+    def _maybe_append_outro(self, raw_video: Path, work_dir: Path,
+                           target_w: int, target_h: int) -> Path:
+        """Append the configured outro to `raw_video` if available.
+
+        Returns either the extended video path or `raw_video` unchanged on
+        failure. The function never raises - any exception is logged and
+        the build proceeds without the outro so a missing/corrupt asset
+        doesn't break the entire video generation pipeline.
+        """
+        outro_path = settings.LIKE_SUBSCRIBE_OUTRO_PATH
+        if not outro_path or not Path(outro_path).exists():
+            return raw_video
+        try:
+            normalized = self._normalize_outro(
+                Path(outro_path), target_w, target_h, work_dir
+            )
+            extended = work_dir / "raw_concat_with_outro.mp4"
+            self._concat_with_outro(raw_video, normalized, extended)
+            return extended
+        except Exception as e:
+            err = getattr(e, "stderr", b"")
+            try:
+                err = err.decode()
+            except Exception:
+                err = str(e)
+            print(f"Outro append failed (continuing without): {err}")
+            return raw_video
 
     def _mux_final(self, video: Path, audio: Path, ass_subs: Path, output: Path) -> bool:
         """Final mux: combine video, audio, and (optional) .ass subtitles."""

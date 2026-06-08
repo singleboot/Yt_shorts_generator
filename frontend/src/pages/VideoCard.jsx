@@ -33,6 +33,7 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
   const isRunning = job?.status === 'running';
   const isComplete = job?.status === 'completed';
   const isFailed = job?.status === 'failed';
+  const isCancelled = job?.status === 'cancelled';
   const isQueued = !job || job?.status === 'queued';
   const progress = job?.progress || 0;
   const canPost = isComplete || upload?.status === 'queued';
@@ -270,6 +271,10 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
     titlebarClass = 'neo-titlebar-error';
     titlebarLabel = 'ERROR';
     dotType = 'model';
+  } else if (isCancelled) {
+    titlebarClass = 'neo-titlebar-error';
+    titlebarLabel = 'CANCELLED';
+    dotType = 'model';
   }
 
   return (
@@ -345,6 +350,21 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
             <div className="w-16 h-16 rounded-2xl bg-[rgba(255,87,87,0.08)] border border-[rgba(255,87,87,0.2)] flex items-center justify-center">
               <span className="text-3xl text-[#FF5757]">!</span>
             </div>
+          </div>
+        ) : isCancelled && onGenerateVideo ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0E1116] gap-3">
+            <div className="w-14 h-14 rounded-2xl bg-[rgba(95,103,114,0.1)] border border-[rgba(95,103,114,0.2)] flex items-center justify-center">
+              <Ban className="h-7 w-7 text-[#5F6772]" />
+            </div>
+            <p className="text-xs text-[#9AA0A6]">Cancelled</p>
+            <button
+              onClick={() => onGenerateVideo(video.index)}
+              className="neo-btn-primary flex items-center gap-1.5 px-3 py-1.5 text-[11px]"
+              title="Retry video generation"
+            >
+              <Video className="h-3 w-3" />
+              Retry Generation
+            </button>
           </div>
         ) : (
           <div className="absolute inset-0 flex items-center justify-center bg-[#0E1116]">
@@ -424,6 +444,15 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
               title="Post now"
             >
               <Send className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {onGenerateVideo && (!video.job || video.job?.status === 'cancelled' || video.job?.status === 'failed') && (
+            <button
+              onClick={() => onGenerateVideo(video.index)}
+              className="neo-btn-primary p-1.5"
+              title="Generate video for this script"
+            >
+              <Video className="h-3.5 w-3.5" />
             </button>
           )}
           <button
