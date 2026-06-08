@@ -172,6 +172,14 @@ def _run_migrations():
                 pass
         # YouTube channels table - Base.metadata.create_all handles new DBs, but be safe
         tables = [row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()]
+        if "jobs" in tables:
+            job_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(jobs)")).fetchall()]
+            if "current_stage" not in job_cols:
+                try:
+                    conn.execute(text("ALTER TABLE jobs ADD COLUMN current_stage VARCHAR"))
+                    conn.commit()
+                except Exception:
+                    pass
         if "youtube_channels" not in tables:
             try:
                 conn.execute(text("""

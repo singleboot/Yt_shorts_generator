@@ -148,6 +148,12 @@ class Job(Base):
     progress = Column(Integer, default=0)  # 0-100
     logs = Column(Text, default="")
     result = Column(JSON, nullable=True)
+    # Resume checkpoint. None = fresh start; populated strings record the
+    # last successfully completed stage so a cancelled/failed job can pick
+    # up where it left off instead of regenerating everything.
+    # Format: one of "research", "script", "scenes_t2v:N/TOTAL", "voiceover:N/TOTAL",
+    # "music", "assembly", "completed".
+    current_stage = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)

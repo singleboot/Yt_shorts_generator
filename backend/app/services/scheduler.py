@@ -347,7 +347,51 @@ class SchedulerService:
             db.commit()
         else:
             script = existing_script
-        
+
+        # RESUME: parse job.current_stage (set by the router when the user
+        # restarts a cancelled/failed job) and derive per-stage skip flags.
+        # The stage values are stable strings documented on the Job model.
+        # Stages that completed before the cancel should be skipped; the
+        # underlying files (scene clips, voice MP3s, music MP3, final MP4)
+        # persist on disk between runs so the "skip if file exists" check
+        # is the actual guard, not this flag.
+        def _parse_resume(stage_str):
+            """Returns (skipped_stages, partial_counts) from a current_stage value.
+            skipped_stages: set of stage names that are already done.
+            partial_counts: dict with int counts for stages that have sub-progress
+                            (e.g. {'scenes_t2v': 2} means scenes 0 and 1 are done).
+            """
+            skipped = set()
+            partial = {}
+            if not stage_str or stage_str == "completed":
+                return skipped, partial
+            # Linear pipeline: research < script < scenes_t2v < voiceover < music < assembly
+            order = ["research", "script", "scenes_t2v", "voiceover", "music", "assembly"]
+            if ":" in stage_str:
+                name, n = stage_str.split(":", 1)
+                try:
+                    n = int(n)
+                except ValueError:
+                    n = 0
+            else:
+                name, n = stage_str, 0
+            if name in order:
+                idx = order.index(name)
+                skipped.update(order[:idx])
+                if name in ("scenes_t2v", "voiceover") and n > 0:
+                    partial[name] = n
+            return skipped, partial
+
+        skipped_stages, partial_counts = _parse_resume(job.current_stage)
+        # Mark the script stage as complete (we just did the reuse-or-generate above).
+        skipped_stages.add("script")
+        if skipped_stages:
+            job.logs = (
+                f"Video {video_num}/{video_count} - Resuming from {job.current_stage} "
+                f"(skipping: {', '.join(sorted(skipped_stages))})"
+            )
+            db.commit()
+
         # Apply per-video overrides if they exist
         override = script.video_overrides
         if override:
@@ -485,6 +529,29 @@ class SchedulerService:
                 source="comfyui_ltx_t2v",
                 local_path=str(path)
             ))
+        db.commit()
+
+        # CHECKPOINT: scenes t2v complete
+        job.current_stage = f"scenes_t2v:{len(scene_clip_paths)}/{len(scenes)}"
+        db.commit()
+
+        # If every scene is already on disk (full resume case), the t2v loop
+        # above did zero work. Skip voiceover too if it's already done.
+        if "voiceover" in skipped_stages and not check_cancel():
+            # Verify files exist before declaring voiceover done
+            voice_dir = audio_dir
+            all_voice_present = all(
+                (voice_dir / f"voice_{i+1:02d}.mp3").exists()
+                and (voice_dir / f"voice_{i+1:02d}.mp3").stat().st_size > 1024
+                for i in range(len(scenes))
+                if scenes[i].get("narration_text")
+            )
+            if all_voice_present:
+                job.logs = f"Video {video_num}/{video_count} - Voiceover already on disk, skipping"
+                db.commit()
+                # Skip the voiceover block below
+                job.current_stage = "voiceover:1/1"  # sentinel: all done
+                db.commit()
 
         job.progress = 55
         job.logs = f"Video {video_num}/{video_count} - Generating voiceover..."
@@ -509,11 +576,42 @@ class SchedulerService:
             effective_voice = script_vo["voice_id"]
             voice_custom = script_vo.get("voice_custom", "")
         speaker_for_tts = voice_custom if effective_voice == "__custom__" else effective_voice
-        audio_assets = run_async(audio_service.generate_scene_voiceovers(
-            script_data.get("scenes", []),
-            voice_id=speaker_for_tts,
-            project_dir=audio_dir
-        ))
+
+        # RESUME: if the previous run completed voiceover (current_stage passed
+        # it OR we set the sentinel above in the scenes_t2v check), reuse the
+        # mp3 files on disk rather than calling ComfyUI TTS again.
+        skip_voiceover = (
+            "voiceover" in skipped_stages
+            or job.current_stage == "voiceover:1/1"
+        )
+        if skip_voiceover:
+            audio_assets = []
+            for i, sc in enumerate(script_data.get("scenes", [])):
+                if not sc.get("narration_text"):
+                    continue
+                v_path = audio_dir / f"voice_{i+1:02d}.mp3"
+                if v_path.exists() and v_path.stat().st_size > 1024:
+                    audio_assets.append({
+                        "scene_index": i,
+                        "type": "audio",
+                        "source": "comfyui_qwen3_tts",
+                        "local_path": str(v_path),
+                        "text": sc["narration_text"],
+                        "voice_id": speaker_for_tts,
+                    })
+            if audio_assets:
+                job.logs = f"Video {video_num}/{video_count} - Voiceover already on disk ({len(audio_assets)} clips), skipping TTS"
+                db.commit()
+            else:
+                # Files missing - fall through to regeneration
+                skip_voiceover = False
+
+        if not skip_voiceover:
+            audio_assets = run_async(audio_service.generate_scene_voiceovers(
+                script_data.get("scenes", []),
+                voice_id=speaker_for_tts,
+                project_dir=audio_dir
+            ))
 
         for asset in audio_assets:
             db.add(models.Asset(
@@ -527,6 +625,22 @@ class SchedulerService:
 
         db.commit()
 
+        # CHECKPOINT: voiceover complete
+        voice_count = len([s for s in script_data.get("scenes", []) if s.get("narration_text")])
+        job.current_stage = f"voiceover:{voice_count}/{voice_count}" if voice_count else "voiceover:0/0"
+        db.commit()
+
+        # RESUME: if music was already complete in a previous run, reuse the
+        # mp3 on disk rather than hitting ComfyUI music gen again.
+        music_output_path = audio_dir / "background_music.mp3"
+        if "music" in skipped_stages and music_output_path.exists() and music_output_path.stat().st_size > 1024:
+            music_path = music_output_path
+            job.logs = f"Video {video_num}/{video_count} - Music already on disk, skipping"
+            job.current_stage = "music"
+            db.commit()
+        else:
+            music_path = None
+
         job.progress = 70
         job.logs = f"Video {video_num}/{video_count} - Getting background music..."
         db.commit()
@@ -536,25 +650,68 @@ class SchedulerService:
         music_custom = script_vo.get("music_custom") if script_vo.get("music_custom") else audio_settings.get("music_custom", "")
         music_prompt = (script_vo or {}).get("music_prompt", "")
 
-        music_output_path = audio_dir / "background_music.mp3"
-        if music_prompt:
-            music_path = run_async(audio_service.get_background_music(
-                genre=music_prompt,
-                output_path=music_output_path,
-                duration=duration
-            ))
-        elif effective_music_genre == "__custom__" and music_custom:
-            music_path = run_async(audio_service.get_background_music(
-                genre=music_custom,
-                output_path=music_output_path,
-                duration=duration
-            ))
-        else:
-            music_path = run_async(audio_service.get_background_music(
-                genre=effective_music_genre,
-                output_path=music_output_path,
-                duration=duration
-            ))
+        if music_path is None:
+            if music_prompt:
+                music_path = run_async(audio_service.get_background_music(
+                    genre=music_prompt,
+                    output_path=music_output_path,
+                    duration=duration
+                ))
+            elif effective_music_genre == "__custom__" and music_custom:
+                music_path = run_async(audio_service.get_background_music(
+                    genre=music_custom,
+                    output_path=music_output_path,
+                    duration=duration
+                ))
+            else:
+                music_path = run_async(audio_service.get_background_music(
+                    genre=effective_music_genre,
+                    output_path=music_output_path,
+                    duration=duration
+                ))
+
+        # CHECKPOINT: music done
+        if music_path:
+            job.current_stage = "music"
+            db.commit()
+
+        # RESUME: if the final video is already on disk and valid (resume case),
+        # skip the expensive assembly step. If the file exists but is older than
+        # any of the input files, we'd need to re-run — but for simplicity, treat
+        # any existing final_video.mp4 as valid (we're not editing scenes in
+        # this path; use Reassemble from the EditVideoModal for full rebuilds).
+        output_path = final_dir / "final_video.mp4"
+        if "assembly" in skipped_stages and output_path.exists() and output_path.stat().st_size > 1024:
+            job.logs = f"Video {video_num}/{video_count} - Final video already on disk, skipping assembly"
+            job.current_stage = "completed"
+            db.commit()
+            # Skip the rest of the pipeline (assembly, SEO, upload scheduling)
+            # but still need to make sure upload row exists.
+            existing_upload = db.query(models.Upload).filter(
+                models.Upload.project_id == project.id,
+                models.Upload.script_id == script.id,
+            ).first()
+            if not existing_upload:
+                seo = run_async(script_service.generate_seo_metadata(
+                    topic=topic, category=project.category, script_content=script.content
+                ))
+                next_slot = self._get_next_upload_slot(project)
+                upload = models.Upload(
+                    project_id=project.id, script_id=script.id,
+                    video_path=str(output_path), scheduled_for=next_slot,
+                    status="queued",
+                    title=seo.get("title", script.title),
+                    description=seo.get("description", ""),
+                    tags=",".join(seo.get("hashtags", [])[:15])
+                )
+                db.add(upload)
+                db.commit()
+            job.progress = 100
+            job.logs = f"Video {video_num}/{video_count} - Complete! (resumed from checkpoint)"
+            job.status = "completed"
+            job.completed_at = datetime.utcnow()
+            db.commit()
+            return
 
         job.progress = 80
         job.logs = f"Video {video_num}/{video_count} - Assembling video..."
@@ -622,6 +779,8 @@ class SchedulerService:
             
             job.progress = 100
             job.logs = f"Video {video_num}/{video_count} - Complete! Scheduled for {next_slot.strftime('%Y-%m-%d %H:%M')}"
+            # CHECKPOINT: full pipeline complete
+            job.current_stage = "completed"
             db.commit()
         else:
             job.progress = 0

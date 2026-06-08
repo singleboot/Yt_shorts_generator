@@ -589,6 +589,19 @@ class VisualsService:
         paths = []
 
         for i, scene in enumerate(scenes):
+            # RESUME: if a previous run already rendered this scene and the
+            # mp4 file is on disk with content, reuse it instead of burning
+            # another ComfyUI round-trip. This is what makes
+            # cancel-then-restart actually resume.
+            existing_scene = project_dir / f"scene_{i+1:02d}.mp4"
+            if existing_scene.exists() and existing_scene.stat().st_size > 4096:
+                print(
+                    f"Scene {i+1} already rendered "
+                    f"({existing_scene.stat().st_size} bytes) — skipping"
+                )
+                paths.append(existing_scene)
+                continue
+
             # Cancellation check between scenes
             if is_cancelled and is_cancelled():
                 print(f"Scene generation cancelled before scene {i+1}")

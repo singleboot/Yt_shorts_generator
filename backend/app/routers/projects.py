@@ -346,6 +346,7 @@ def list_project_videos(project_id: int, db: Session = Depends(get_db)):
                 "status": job.status,
                 "progress": job.progress,
                 "logs": job.logs,
+                "current_stage": job.current_stage,
                 "created_at": job.created_at.isoformat() if job.created_at else None,
                 "started_at": job.created_at.isoformat() if job.created_at else None,
             } if job else None,
@@ -1190,12 +1191,43 @@ def generate_single_video(project_id: int, video_index: int, db: Session = Depen
     schedule_settings = _json.loads(project.schedule_settings) if isinstance(project.schedule_settings, str) else project.schedule_settings
     video_count = schedule_settings.get("video_count", 1) if isinstance(schedule_settings, dict) else 1
 
+    # Resume-from-checkpoint: if a previous video job for this same
+    # (project, video_index) ended in cancelled/failed and recorded a
+    # current_stage, inherit that stage so the scheduler skips already-
+    # completed work. Files persist on disk between runs, so the per-stage
+    # "skip if file exists" guards handle the actual resume.
+    resume_stage = None
+    last_video_job = (
+        db.query(models.Job)
+        .filter(
+            models.Job.project_id == project_id,
+            models.Job.job_type == "video",
+            models.Job.status.in_(["cancelled", "failed"]),
+        )
+        .order_by(models.Job.id.desc())
+        .first()
+    )
+    # Match the last job to this specific video by parsing its logs. The
+    # scheduler always prefixes with "Video N/..." on the first log line.
+    if last_video_job and last_video_job.logs:
+        try:
+            first_line = last_video_job.logs.split("\n", 1)[0]
+            n_part = first_line.split("/")[0].replace("Video ", "").strip()
+            if int(n_part) == video_index + 1 and last_video_job.current_stage:
+                if last_video_job.current_stage != "completed":
+                    resume_stage = last_video_job.current_stage
+        except Exception:
+            pass
+
     job = models.Job(
         project_id=project_id,
         job_type="video",
         status="queued",
-        logs=f"Video {video_index + 1}/{video_count}",
-        progress=0
+        logs=f"Video {video_index + 1}/{video_count}" + (
+            f" — resuming from {resume_stage}" if resume_stage else ""
+        ),
+        progress=0,
+        current_stage=resume_stage,
     )
     db.add(job)
     db.commit()

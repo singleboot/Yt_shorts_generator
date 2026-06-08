@@ -21,6 +21,7 @@ def list_jobs(status: str = None, db: Session = Depends(get_db)):
             "status": j.status,
             "progress": j.progress,
             "logs": j.logs,
+            "current_stage": j.current_stage,
             "created_at": j.created_at.isoformat() if j.created_at else None,
             "completed_at": j.completed_at.isoformat() if j.completed_at else None
         }
@@ -39,6 +40,7 @@ def get_job(job_id: int, db: Session = Depends(get_db)):
         "status": job.status,
         "progress": job.progress,
         "logs": job.logs,
+        "current_stage": job.current_stage,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "completed_at": job.completed_at.isoformat() if job.completed_at else None
     }
