@@ -7,6 +7,8 @@ import re
 def get_audio_duration(audio_path: Path) -> float:
     """Get audio duration in seconds using ffprobe."""
     import subprocess
+    from app.services.video import _ensure_ffmpeg_on_path_once
+    _ensure_ffmpeg_on_path_once()
     try:
         result = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration",

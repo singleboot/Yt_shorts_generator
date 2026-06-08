@@ -1,12 +1,16 @@
 import asyncio
 import json
+import logging
 import random
+import sys
 import time
 import uuid
 from pathlib import Path
 from typing import List, Dict, Optional
 import httpx
 from app.config import settings
+
+log = logging.getLogger(__name__)
 
 QWEN3_SPEAKERS = [
     "Aiden", "Dylan", "Eric", "Ono_anna",
@@ -52,7 +56,8 @@ class _ComfyClient:
                 resp = await client.post(f"{self.host}/prompt", json=payload)
                 return resp.json().get("prompt_id")
         except Exception as e:
-            print(f"Queue error: {e}")
+            log.error(f"ComfyUI queue error: {e}")
+            print(f"ComfyUI queue error: {e}", file=sys.stderr, flush=True)
             return None
 
     async def get_history(self, prompt_id: str) -> Optional[dict]:
@@ -61,7 +66,8 @@ class _ComfyClient:
                 resp = await client.get(f"{self.host}/history/{prompt_id}")
                 return resp.json()
         except Exception as e:
-            print(f"History error: {e}")
+            log.error(f"ComfyUI history error: {e}")
+            print(f"ComfyUI history error: {e}", file=sys.stderr, flush=True)
             return None
 
     async def wait_for_completion(self, prompt_id: str, timeout: int = 120) -> Optional[dict]:
@@ -74,10 +80,13 @@ class _ComfyClient:
                 if status.get("completed"):
                     return data
                 if status.get("status_str") == "error":
-                    print(f"ComfyUI execution error: {data}")
+                    err_msg = data.get("status", {}).get("messages", [])
+                    log.error(f"ComfyUI execution error on {prompt_id}: {err_msg}")
+                    print(f"[TTS] ComfyUI execution error on {prompt_id}: {err_msg}", file=sys.stderr, flush=True)
                     return None
             await asyncio.sleep(0.5)
-        print(f"ComfyUI timeout after {timeout}s")
+        log.error(f"ComfyUI timeout after {timeout}s for {prompt_id}")
+        print(f"[TTS] ComfyUI timeout after {timeout}s for {prompt_id}", file=sys.stderr, flush=True)
         return None
 
     async def download_file(self, filename: str, subfolder: str = "", folder_type: str = "output") -> Optional[bytes]:
@@ -89,7 +98,8 @@ class _ComfyClient:
                     return resp.content
             return None
         except Exception as e:
-            print(f"Download error: {e}")
+            log.error(f"ComfyUI download error: {e}")
+            print(f"[TTS] ComfyUI download error: {e}", file=sys.stderr, flush=True)
             return None
 
     def load_workflow(self, filename: str) -> dict:
@@ -138,12 +148,13 @@ class ComfyTTS:
 
     async def generate_voiceover(self, text: str, speaker: str, output_path: Path) -> bool:
         if not await self.is_connected():
-            print("ComfyUI not connected, TTS unavailable")
+            log.error("ComfyUI not connected, TTS unavailable")
+            print("ComfyUI not connected, TTS unavailable", file=sys.stderr, flush=True)
             return False
 
         speaker_name = self._resolve_speaker(speaker)
         if not speaker_name:
-            print(f"Unknown speaker: {speaker}, falling back to Ryan")
+            log.warning(f"Unknown speaker: {speaker}, falling back to Ryan")
             speaker_name = "Ryan"
 
         workflow = _client.load_workflow("tts_qwen3.json")
@@ -157,11 +168,13 @@ class ComfyTTS:
 
         result = await _client.queue_and_wait(workflow)
         if not result:
+            log.error(f"TTS queue_and_wait returned None for {prefix}")
             return False
 
         audio_bytes = await _client.retrieve_audio(result, prefix)
         if not audio_bytes:
-            print(f"TTS: could not retrieve audio for {prefix}")
+            log.error(f"TTS: could not retrieve audio for {prefix} (ComfyUI returned no audio output)")
+            print(f"[TTS] could not retrieve audio for {prefix}", file=sys.stderr, flush=True)
             return False
 
         output_path.parent.mkdir(parents=True, exist_ok=True)

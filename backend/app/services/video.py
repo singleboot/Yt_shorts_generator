@@ -1,11 +1,51 @@
 import os
+import sys
 import subprocess
 import shutil
+import logging
 from pathlib import Path
 from typing import List, Dict
 from app.config import settings
 import moviepy
 import random
+
+log = logging.getLogger(__name__)
+
+
+def _ensure_ffmpeg_on_path_once():
+    """Module-level one-time PATH augmentation. If ffmpeg isn't on PATH and
+    the local ffmpeg\\bin directory exists, prepend it. This makes every
+    subprocess.run(["ffmpeg", ...]) call in this module work regardless of
+    how the backend was launched (start_app.bat pre-set PATH, or a direct
+    uvicorn from PowerShell which may not have ffmpeg).
+    """
+    if shutil.which("ffmpeg"):
+        return
+    project_root = Path(__file__).resolve().parent.parent.parent
+    local_bin = project_root / "ffmpeg" / "bin"
+    if local_bin.exists() and str(local_bin) not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = str(local_bin) + os.pathsep + os.environ.get("PATH", "")
+        log.info(f"Prepended {local_bin} to PATH for ffmpeg subprocess calls")
+
+
+_ensure_ffmpeg_on_path_once()
+
+
+def _ffmpeg_binary() -> str:
+    """Return the absolute path to the ffmpeg binary, or "ffmpeg" if found
+    on PATH. Ensures subprocess.run(["ffmpeg", ...]) works regardless of
+    how the backend was launched.
+    """
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    # Fallback: check the local ffmpeg\bin next to the project root
+    project_root = Path(__file__).resolve().parent.parent.parent
+    local = project_root / "ffmpeg" / "bin" / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+    if local.exists():
+        return str(local)
+    # Last resort: return bare "ffmpeg" so the error message names the missing exe
+    return "ffmpeg"
 
 
 class VideoService:
@@ -327,10 +367,15 @@ class VideoService:
             # end, minus the transition that will overlap into scene 2).
             cumulative = durations[0] - td
             for i in range(1, n):
-                v_in = f"v{i-1}{i}" if i > 1 else "v01"
+                # The first xfade consumes raw input 0. Subsequent xfades
+                # consume the previous xfade's output. v{i-1}{i} is the output
+                # label of the (i-1)-th xfade. Without this, the first xfade
+                # would try to use [v01] (its own output label) as input and
+                # ffmpeg would either error or silently fall back to a hardcut.
+                v_in = "[0:v]" if i == 1 else f"[v{i-1}{i}]"
                 v_out = f"v{i}{i+1}" if i < n - 1 else "vout"
                 video_filters.append(
-                    f"[{v_in}][{i}:v]xfade=transition={xfade_name}:duration={td}:offset={cumulative:.3f}[{v_out}]"
+                    f"{v_in}[{i}:v]xfade=transition={xfade_name}:duration={td}:offset={cumulative:.3f}[{v_out}]"
                 )
                 if i < n - 1:
                     cumulative += durations[i] - td
@@ -351,10 +396,13 @@ class VideoService:
                     af = []
                     cumulative_a = durations[0] - td
                     for i in range(1, n):
-                        a_in = f"a{i-1}{i}" if i > 1 else "a01"
+                        # Same fix as video xfade: first iteration consumes
+                        # raw input 0, subsequent iterations consume previous
+                        # acrossfade output. a{i-1}{i} is the previous output.
+                        a_in = "[0:a]" if i == 1 else f"[a{i-1}{i}]"
                         a_out = f"a{i}{i+1}" if i < n - 1 else "aout"
                         af.append(
-                            f"[{a_in}][{i}:a]acrossfade=d={td}:c1=tri:c2=tri[{a_out}]"
+                            f"{a_in}[{i}:a]acrossfade=d={td}:c1=tri:c2=tri[{a_out}]"
                         )
                         if i < n - 1:
                             cumulative_a += durations[i] - td
@@ -535,6 +583,9 @@ class VideoService:
         """
         outro_path = settings.LIKE_SUBSCRIBE_OUTRO_PATH
         if not outro_path or not Path(outro_path).exists():
+            log.warning(
+                f"Outro file not found at {outro_path} - skipping outro append"
+            )
             return raw_video
         try:
             normalized = self._normalize_outro(
@@ -542,14 +593,26 @@ class VideoService:
             )
             extended = work_dir / "raw_concat_with_outro.mp4"
             self._concat_with_outro(raw_video, normalized, extended)
+            log.info(f"Outro appended: {extended}")
             return extended
+        except subprocess.CalledProcessError as e:
+            err = (e.stderr or b"").decode(errors="ignore")[-2000:]
+            log.error(
+                f"Outro append failed (ffmpeg error, continuing without): {err}"
+            )
+            print(f"Outro append failed: {err}", file=sys.stderr, flush=True)
+            return raw_video
+        except FileNotFoundError as e:
+            # ffmpeg binary not on PATH in the subprocess environment
+            log.error(
+                f"Outro append failed: ffmpeg not found on PATH ({e}). "
+                f"Add ffmpeg to PATH or set the FFMPEG_PATH env var."
+            )
+            print(f"Outro append failed: ffmpeg not on PATH", file=sys.stderr, flush=True)
+            return raw_video
         except Exception as e:
-            err = getattr(e, "stderr", b"")
-            try:
-                err = err.decode()
-            except Exception:
-                err = str(e)
-            print(f"Outro append failed (continuing without): {err}")
+            log.exception(f"Outro append failed (unexpected, continuing without): {e}")
+            print(f"Outro append failed: {e}", file=sys.stderr, flush=True)
             return raw_video
 
     def _mux_final(self, video: Path, audio: Path, ass_subs: Path, output: Path) -> bool:

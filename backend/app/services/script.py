@@ -54,13 +54,17 @@ class ScriptService:
                               voice_custom: str = None, music_custom: str = None) -> Dict:
         """Generate a full script with scenes using Ollama."""
 
-        # Scene ladder. Pacing scales with duration:
-        #   - 30-120s: 6s per scene (current behavior, snappy Shorts rhythm)
-        #   - 180s:    22 scenes @ 8s (long-form, 4-act structure)
-        #   - 300s:    30 scenes @ 10s (long-form, 4-act structure)
-        # Long-form cap is 30 scenes to keep the LLM JSON output under
-        # ~10K tokens; some 7B/8B Ollama models cap output at 8K and will
-        # silently truncate a 50-scene response.
+        # Scene pacing. The user's requested total duration is split into:
+        #   - AI scene content: round(effective_duration / per_scene) scenes
+        #   - Outro: 6s (added by video.py after this script is built)
+        #
+        # per_scene changes with the requested duration so long-form
+        # videos get longer scenes (8s for 180s, 10s for 300s) - the 4-act
+        # narrative structure breathes better that way.
+        #
+        # Cap at 30 scenes to keep the LLM JSON output under ~10K tokens;
+        # some 7B/8B Ollama models cap output at 8K and will silently
+        # truncate a 50-scene response.
         #
         # OUTRO RESERVE: video.py appends a 6s "like & subscribe" outro to
         # the final video. We subtract that here so the AI content fills
@@ -71,27 +75,18 @@ class ScriptService:
         outro_seconds = getattr(_settings, "OUTRO_DURATION_SECONDS", 0) or 0
         effective_duration = max(duration - outro_seconds, 6)
 
-        if effective_duration <= 30:
-            num_scenes = 5
-            per_scene = 6
-        elif effective_duration <= 45:
-            num_scenes = 7
-            per_scene = 6
-        elif effective_duration <= 60:
-            num_scenes = 10
-            per_scene = 6
-        elif effective_duration <= 90:
-            num_scenes = 15
-            per_scene = 6
-        elif effective_duration <= 120:
-            num_scenes = 20
+        # Per-scene pacing by length. The 4-act long-form structure (>=180s)
+        # uses longer scenes.
+        if effective_duration <= 120:
             per_scene = 6
         elif effective_duration <= 180:
-            num_scenes = 22
             per_scene = 8
         else:
-            num_scenes = 30
             per_scene = 10
+
+        # Compute num_scenes so the AI content exactly fills effective_duration.
+        # Cap at 30 to keep the LLM prompt small. Never less than 1.
+        num_scenes = max(1, min(30, round(effective_duration / per_scene)))
 
         long_form = duration >= 180
 

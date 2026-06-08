@@ -908,6 +908,9 @@ class VisualsService:
     def _make_fallback_clip(self, duration: float, width: int, height: int) -> bytes:
         """Generate a simple black clip as fallback when t2v fails."""
         import subprocess
+        # Make sure ffmpeg is on PATH before calling it from this fallback path
+        from app.services.video import _ensure_ffmpeg_on_path_once
+        _ensure_ffmpeg_on_path_once()
         output_path = settings.STORAGE_DIR / f"fallback_{int(time.time())}.mp4"
         try:
             subprocess.run([
