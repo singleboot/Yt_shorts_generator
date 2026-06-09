@@ -601,7 +601,7 @@ def trending_now(project_id: int, body: dict = {}, db: Session = Depends(get_db)
         vs["total_duration"] = body["duration"]
         project.visual_settings = vs
 
-    video_count = body.get("video_count", 3)
+    video_count = body.get("video_count", 1)
     ss = project.schedule_settings
     if isinstance(ss, str): ss = _json.loads(ss) if ss else {}
     elif ss is None: ss = {}

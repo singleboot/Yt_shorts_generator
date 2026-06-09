@@ -80,7 +80,7 @@ function ProjectDetail() {
   const [captionStrokeWidth, setCaptionStrokeWidth] = useState(3);
   const [captionAnimation, setCaptionAnimation] = useState('word_by_word');
   const [url, setUrl] = useState('');
-  const [genCount, setGenCount] = useState(4);
+  const [genCount, setGenCount] = useState(1);
   const [duration, setDuration] = useState(45);
 
   // Suggestions & trending
