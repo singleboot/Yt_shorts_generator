@@ -10,7 +10,7 @@ function formatDateTime(iso) {
     + ' · ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
 
-function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mode, onRegenScript, onRemovePlaceholder, onGenerateVideo, onCleanScenes }) {
+function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onDelete, mode, onRegenScript, onRemovePlaceholder, onGenerateVideo, onCleanScenes }) {
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState('');
 
@@ -36,7 +36,8 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
   const isCancelled = job?.status === 'cancelled';
   const isQueued = !job || job?.status === 'queued';
   const progress = job?.progress || 0;
-  const canPost = isComplete || upload?.status === 'queued';
+  const canPost = isComplete && upload?.status === 'queued';
+  const canUpload = isComplete && !upload;
   const isArchived = !!upload?.archived_at;
   const vs = project.visual_settings || {};
   const displayStyle = overrides?.ai_style || vs.ai_style || 'default';
@@ -473,6 +474,15 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
               title="Post now"
             >
               <Send className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {canUpload && onUpload && (
+            <button
+              onClick={() => onUpload(video.index)}
+              className="neo-btn-primary p-1.5"
+              title="Upload to YouTube"
+            >
+              <Youtube className="h-3.5 w-3.5" />
             </button>
           )}
           {onGenerateVideo && (!video.job || video.job?.status === 'cancelled' || video.job?.status === 'failed') && (

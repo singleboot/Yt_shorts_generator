@@ -685,27 +685,6 @@ class SchedulerService:
             job.logs = f"Video {video_num}/{video_count} - Final video already on disk, skipping assembly"
             job.current_stage = "completed"
             db.commit()
-            # Skip the rest of the pipeline (assembly, SEO, upload scheduling)
-            # but still need to make sure upload row exists.
-            existing_upload = db.query(models.Upload).filter(
-                models.Upload.project_id == project.id,
-                models.Upload.script_id == script.id,
-            ).first()
-            if not existing_upload:
-                seo = run_async(script_service.generate_seo_metadata(
-                    topic=topic, category=project.category, script_content=script.content
-                ))
-                next_slot = self._get_next_upload_slot(project)
-                upload = models.Upload(
-                    project_id=project.id, script_id=script.id,
-                    video_path=str(output_path), scheduled_for=next_slot,
-                    status="queued",
-                    title=seo.get("title", script.title),
-                    description=seo.get("description", ""),
-                    tags=",".join(seo.get("hashtags", [])[:15])
-                )
-                db.add(upload)
-                db.commit()
             job.progress = 100
             job.logs = f"Video {video_num}/{video_count} - Complete! (resumed from checkpoint)"
             job.status = "completed"
@@ -755,30 +734,21 @@ class SchedulerService:
             job.logs = f"Video {video_num}/{video_count} - Generating SEO metadata..."
             db.commit()
             
-            # 7. Generate SEO metadata
+            # 7. Generate SEO metadata (saved on job for manual upload later)
             seo = run_async(script_service.generate_seo_metadata(
                 topic=topic,
                 category=project.category,
                 script_content=script.content
             ))
             
-            # 8. Schedule upload
-            next_slot = self._get_next_upload_slot(project)
-            upload = models.Upload(
-                project_id=project.id,
-                script_id=script.id,
-                video_path=str(output_path),
-                scheduled_for=next_slot,
-                status="queued",
-                title=seo.get("title", script.title),
-                description=seo.get("description", ""),
-                tags=",".join(seo.get("hashtags", [])[:15])
-            )
-            db.add(upload)
-            db.commit()
+            # Store SEO metadata on the job result so the frontend can use it for manual upload
+            job.result = {
+                "video_path": str(output_path),
+                "seo": seo,
+            }
             
             job.progress = 100
-            job.logs = f"Video {video_num}/{video_count} - Complete! Scheduled for {next_slot.strftime('%Y-%m-%d %H:%M')}"
+            job.logs = f"Video {video_num}/{video_count} - Complete!"
             # CHECKPOINT: full pipeline complete
             job.current_stage = "completed"
             db.commit()

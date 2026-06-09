@@ -373,6 +373,20 @@ function ProjectDetail() {
     }
   };
 
+  const handleUpload = async (videoIndex) => {
+    try {
+      const res = await api.post(`/projects/${id}/videos/${videoIndex}/upload`);
+      if (res.data.status === 'success') {
+        showToast(`Video ${videoIndex + 1} queued for upload!`);
+      } else {
+        showToast(res.data.message || 'Upload failed', 'warning');
+      }
+      loadProject();
+    } catch (e) {
+      showToast(e?.response?.data?.detail || 'Failed to upload', 'error');
+    }
+  };
+
   const handleSaveOverrides = async (videoIndex, overrides) => {
     try {
       await api.put(`/projects/${id}/videos/${videoIndex}/settings`, overrides);
@@ -1666,6 +1680,7 @@ function ProjectDetail() {
                 project={project}
                 getStepLabel={getStepLabel}
                 onPost={() => handlePost(video.index)}
+                onUpload={() => handleUpload(video.index)}
                 onDelete={() => handleDeleteVideo(video.index)}
                 onEdit={() => setEditingVideo(video)}
                 mode={phase === 'scripts' ? 'script' : 'video'}

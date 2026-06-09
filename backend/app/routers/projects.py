@@ -494,6 +494,72 @@ def delete_video(project_id: int, video_index: int, db: Session = Depends(get_db
 
     return {"status": "success", "message": f"Video {video_index + 1} deleted"}
 
+@router.post("/{project_id}/videos/{video_index}/upload", response_model=dict)
+def upload_single_video(project_id: int, video_index: int, db: Session = Depends(get_db)):
+    """Manually queue a completed video for YouTube upload."""
+    from pathlib import Path as _Path
+    import asyncio as _aio
+
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    script = db.query(models.Script).filter(
+        models.Script.project_id == project_id,
+        models.Script.video_index == video_index
+    ).first()
+    if not script:
+        raise HTTPException(status_code=404, detail="Script not found")
+
+    # Check if final video exists
+    final_dir = settings.PROJECTS_DIR / str(project_id) / "final" / str(video_index)
+    video_path = final_dir / "final_video.mp4"
+    if not video_path.exists():
+        raise HTTPException(status_code=400, detail="No completed video file. Generate the video first.")
+
+    # Check if already uploaded/queued
+    existing = db.query(models.Upload).filter(
+        models.Upload.script_id == script.id,
+        models.Upload.status.in_(["queued", "processing", "done"])
+    ).first()
+    if existing:
+        return {"status": "error", "message": f"Video already {existing.status}"}
+
+    # Generate SEO metadata if needed
+    from app.services.script import script_service
+
+    def run_async(coro):
+        try:
+            loop = _aio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    return pool.submit(_aio.run, coro).result()
+            return loop.run_until_complete(coro)
+        except RuntimeError:
+            return _aio.run(coro)
+
+    seo = run_async(script_service.generate_seo_metadata(
+        topic=project.source_value or script.title,
+        category=project.category,
+        script_content=script.content
+    ))
+
+    upload = models.Upload(
+        project_id=project_id,
+        script_id=script.id,
+        video_path=str(video_path),
+        scheduled_for=datetime.utcnow(),
+        status="queued",
+        title=seo.get("title", script.title),
+        description=seo.get("description", ""),
+        tags=",".join(seo.get("hashtags", [])[:15])
+    )
+    db.add(upload)
+    db.commit()
+
+    return {"status": "success", "message": f"Video #{video_index + 1} queued for upload", "upload_id": upload.id}
+
 @router.post("/{project_id}/videos/{video_index}/post", response_model=dict)
 def post_single_video(project_id: int, video_index: int, db: Session = Depends(get_db)):
     """Schedule a single video for upload using global settings."""
