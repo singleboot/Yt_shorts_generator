@@ -37,7 +37,7 @@ function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onD
   const isQueued = !job || job?.status === 'queued';
   const progress = job?.progress || 0;
   const canPost = isComplete && upload?.status === 'queued';
-  const canUpload = isComplete && !upload;
+  const canUpload = isComplete && (!upload || (upload && !upload.youtube_video_id));
   const isArchived = !!upload?.archived_at;
   const vs = project.visual_settings || {};
   const displayStyle = overrides?.ai_style || vs.ai_style || 'default';
