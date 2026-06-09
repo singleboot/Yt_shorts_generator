@@ -649,7 +649,7 @@ class VisualsService:
                     _regen_offset = int(_active.get("_regen_offset", 0) or 0)
             except Exception:
                 pass
-            seed = hash((project_id, video_index, i, scene.get("visual_description", "")[:50])) & 0xFFFFFFFF
+            seed = random.randint(0, 2**32 - 1)
             seed = (seed + _regen_offset) & 0xFFFFFFFF
 
             # Sanitize the visual_description: strip abstract phrases LTX 2.3 cannot

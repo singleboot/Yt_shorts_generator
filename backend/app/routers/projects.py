@@ -683,10 +683,10 @@ def trending_now(project_id: int, body: dict = {}, db: Session = Depends(get_db)
     schedule_settings = project.schedule_settings
     if isinstance(schedule_settings, str): schedule_settings = _json.loads(schedule_settings) if schedule_settings else {}
     visual_settings = project.visual_settings
-    if isinstance(visual_settings, str): visual_settings = _json.loads(visual_settings) if visual_settings else {}
-    duration = max(visual_settings.get("total_duration", 45) - (settings.OUTRO_DURATION_SECONDS or 0), 6)
+    if isinstance(visual_settings, str):
+        visual_settings = _json.loads(visual_settings) if visual_settings else {}
+    duration = visual_settings.get("total_duration", 45)
     video_count = schedule_settings.get("video_count", 1) if isinstance(schedule_settings, dict) else 1
-
     results = []
     for i in range(video_count):
         existing = db.query(models.Script).filter(
@@ -858,8 +858,8 @@ def generate_scripts(project_id: int, body: GenerateScriptsRequest = Body(Genera
     # Find next available index for appending
     max_index = db.query(func.max(models.Script.video_index)).filter(
         models.Script.project_id == project_id
-    ).scalar() or -1
-    start_index = max_index + 1
+    ).scalar()
+    start_index = max_index + 1 if max_index is not None else 0
 
     results = []
     for offset in range(video_count):
@@ -979,7 +979,7 @@ def add_new_videos(project_id: int, body: AddVideosRequest = Body(AddVideosReque
     visual_settings = project.visual_settings
     if isinstance(visual_settings, str):
         visual_settings = _json.loads(visual_settings) if visual_settings else {}
-    duration = max(visual_settings.get("total_duration", 45) - (settings.OUTRO_DURATION_SECONDS or 0), 6)
+    duration = visual_settings.get("total_duration", 45)
     audio_settings = project.audio_settings
     if isinstance(audio_settings, str):
         audio_settings = _json.loads(audio_settings) if audio_settings else {}
@@ -1005,8 +1005,8 @@ def add_new_videos(project_id: int, body: AddVideosRequest = Body(AddVideosReque
     # Find next available index for appending
     max_index = db.query(func.max(models.Script.video_index)).filter(
         models.Script.project_id == project_id
-    ).scalar() or -1
-    start_index = max_index + 1
+    ).scalar()
+    start_index = max_index + 1 if max_index is not None else 0
 
     new_scripts = []
     new_indices = []
@@ -1134,7 +1134,7 @@ def regenerate_script(project_id: int, video_index: int, db: Session = Depends(g
     visual_settings = project.visual_settings
     if isinstance(visual_settings, str):
         visual_settings = _json.loads(visual_settings) if visual_settings else {}
-    duration = max(visual_settings.get("total_duration", 45) - (settings.OUTRO_DURATION_SECONDS or 0), 6)
+    duration = visual_settings.get("total_duration", 45)
     video_count = schedule_settings.get("video_count", 1) if isinstance(schedule_settings, dict) else 1
     audio_settings = project.audio_settings
     if isinstance(audio_settings, str):

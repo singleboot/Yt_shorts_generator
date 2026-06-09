@@ -22,27 +22,20 @@ class AudioService:
     
     async def generate_voiceover(self, text: str, voice_id: str, output_path: Path,
                                   rate: str = "+0%", pitch: str = "+0Hz") -> bool:
-        # Primary: ComfyUI Qwen3 TTS
-        try:
-            result = await comfy_tts.generate_voiceover(text, voice_id, output_path)
-            if result:
-                return True
-        except Exception as e:
-            print(f"ComfyUI TTS failed: {e}")
-        
-        # Fallback: edge-tts (Microsoft Edge online TTS)
+        # Use edge-tts (Microsoft online TTS) — Qwen3 TTS is broken upstream
         try:
             import edge_tts
             output_path.parent.mkdir(parents=True, exist_ok=True)
             communicate = edge_tts.Communicate(text, voice_id)
             await communicate.save(str(output_path))
             if output_path.exists() and output_path.stat().st_size > 1024:
-                print(f"[TTS] edge-tts fallback succeeded for {voice_id}")
                 return True
+            else:
+                print(f"[TTS] edge-tts produced empty/missing file for {voice_id}")
+                return False
         except Exception as e:
-            print(f"edge-tts fallback failed: {e}")
-        
-        return False
+            print(f"[TTS] edge-tts failed for {voice_id}: {e}")
+            return False
     
     async def generate_scene_voiceovers(self, scenes: List[Dict], voice_id: str,
                                         project_dir: Path) -> List[Dict]:
