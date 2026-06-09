@@ -831,7 +831,7 @@ def generate_scripts(project_id: int, body: GenerateScriptsRequest = Body(Genera
     visual_settings = project.visual_settings
     if isinstance(visual_settings, str):
         visual_settings = _json.loads(visual_settings) if visual_settings else {}
-    duration = max(visual_settings.get("total_duration", 45) - (settings.OUTRO_DURATION_SECONDS or 0), 6)
+    duration = visual_settings.get("total_duration", 45)
     video_count = schedule_settings.get("video_count", 1) if isinstance(schedule_settings, dict) else 1
     audio_settings = project.audio_settings
     if isinstance(audio_settings, str):

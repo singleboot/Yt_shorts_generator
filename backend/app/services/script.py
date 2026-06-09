@@ -276,11 +276,10 @@ Respond ONLY in valid JSON. No markdown, no commentary, no code blocks — just 
                 response = response.split("```")[1].split("```")[0].strip()
 
             script_data = json.loads(response)
-            # Truncation guard: long-form LLMs (especially 7B/8B with 8K
-            # output cap) may return fewer scenes than asked. If we're
-            # missing scenes, top up with auto-generated filler scenes
-            # so the assembly pipeline has the right count.
+            # Truncation guard
+            print(f"[script] Ollama returned {len(script_data.get('scenes', []))} scenes, num_scenes={num_scenes}", flush=True)
             script_data = self._topup_scenes(script_data, num_scenes, per_scene, topic, category)
+            print(f"[script] After topup: {len(script_data.get('scenes', []))} scenes", flush=True)
             # ENFORCE: explicit CTA at end of last scene's narration.
             # Many LLMs end the script abruptly after the reflective wrap-up
             # and forget the call-to-action. We append/strengthen it here so

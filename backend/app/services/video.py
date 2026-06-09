@@ -639,7 +639,6 @@ class VideoService:
                     "-c:v", "libx264", "-preset", "fast", "-crf", "20",
                     "-c:a", "aac", "-b:a", "192k",
                     "-pix_fmt", "yuv420p",
-                    "-shortest",
                     "-movflags", "+faststart",
                     str(output)
                 ]
@@ -650,7 +649,6 @@ class VideoService:
                     "-i", str(audio),
                     "-c:v", "copy",
                     "-c:a", "aac", "-b:a", "192k",
-                    "-shortest",
                     "-movflags", "+faststart",
                     str(output)
                 ]
