@@ -1004,7 +1004,7 @@ def add_new_videos(project_id: int, body: AddVideosRequest = Body(AddVideosReque
 
     # Find next available index for appending
     max_index = db.query(func.max(models.Script.video_index)).filter(
-        models.Project.id == project_id
+        models.Script.project_id == project_id
     ).scalar() or -1
     start_index = max_index + 1
 

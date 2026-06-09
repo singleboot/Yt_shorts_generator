@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import datetime, timedelta
 from typing import List
 from pathlib import Path
@@ -512,6 +513,22 @@ class SchedulerService:
                 on_progress=scene_progress,
                 is_cancelled=check_cancel,
             ))
+
+            if check_cancel():
+                return
+
+            # Abort if no scenes were generated (all failed/timed out)
+            if not scene_clip_paths or len(scene_clip_paths) == 0:
+                job.status = "failed"
+                job.logs = f"Video {video_num}/{video_count} - Scene generation failed (0/{len(scenes)} clips)"
+                db.commit()
+                return
+
+            if len(scene_clip_paths) < len(scenes):
+                logging.warning(
+                    "Video %s/%s: only %s/%s scenes generated, proceeding with partial",
+                    video_num, video_count, len(scene_clip_paths), len(scenes)
+                )
         finally:
             try:
                 if hasattr(_settings_module, "_active_visual_settings"):
@@ -607,11 +624,18 @@ class SchedulerService:
                 skip_voiceover = False
 
         if not skip_voiceover:
-            audio_assets = run_async(audio_service.generate_scene_voiceovers(
-                script_data.get("scenes", []),
-                voice_id=speaker_for_tts,
-                project_dir=audio_dir
-            ))
+            try:
+                audio_assets = run_async(audio_service.generate_scene_voiceovers(
+                    script_data.get("scenes", []),
+                    voice_id=speaker_for_tts,
+                    project_dir=audio_dir
+                ))
+            except Exception as e:
+                logging.warning("Video %s/%s - TTS voiceover failed (continuing without): %s",
+                    video_num, video_count, str(e)[:200])
+                job.logs = f"Video {video_num}/{video_count} - Voiceover failed, continuing without"
+                db.commit()
+                audio_assets = []
 
         for asset in audio_assets:
             db.add(models.Asset(
