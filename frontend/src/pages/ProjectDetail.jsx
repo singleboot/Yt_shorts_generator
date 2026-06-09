@@ -301,7 +301,12 @@ function ProjectDetail() {
           for (const inc of incomingVideos) {
             const idx = merge.findIndex(v => v.index === inc.index);
             if (idx >= 0) {
-              merge[idx] = { ...inc, regenerating: merge[idx].regenerating || false, generating: merge[idx].generating || false };
+              const local = merge[idx];
+              // If locally regenerating, keep the spinner card — don't let
+              // stale backend data (old job, missing script) overwrite it.
+              if (local.regenerating) continue;
+              if (local.generating) continue;
+              merge[idx] = { ...inc };
             } else {
               merge.push(inc);
             }
