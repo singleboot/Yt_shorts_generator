@@ -110,6 +110,10 @@ def delete_project(project_id: int, action: str = "delete", db: Session = Depend
     # Permanent delete
     if project_dir.exists():
         shutil.rmtree(project_dir)
+    # Manually clear FK-referenced logs before cascading (ordering issues with
+    # prompt_logs/research_logs referencing both project and jobs)
+    db.query(models.PromptLog).filter(models.PromptLog.project_id == project_id).delete()
+    db.query(models.ResearchLog).filter(models.ResearchLog.project_id == project_id).delete()
     db.delete(project)
     db.commit()
 
