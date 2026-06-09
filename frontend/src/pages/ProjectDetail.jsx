@@ -64,6 +64,7 @@ function ProjectDetail() {
   const [phase, setPhase] = useState('setup');
   const initialLoadDone = useRef(false);
   const generatingScriptsRef = useRef(false);
+  const regeneratingRef = useRef(false);
   const cancelScriptRef = useRef(null);
   const prevPhaseRef = useRef('setup');
 
@@ -316,6 +317,10 @@ function ProjectDetail() {
           }
           // Sort by index to maintain order
           merge.sort((a, b) => a.index - b.index);
+          // Sync ref: if no merged cards are regenerating/generating, clear the refs
+          if (!merge.some(v => v.generating || v.regenerating)) {
+            regeneratingRef.current = false;
+          }
           return merge;
         });
           // Always derive videoCount from the actual list length - never trust
@@ -323,11 +328,13 @@ function ProjectDetail() {
           // Fall back to the backend's hint only if the list is empty.
         setVideoCount(incomingVideos.length > 0 ? incomingVideos.length : (vidRes.data.video_count || 1));
         // Detect phase based on whether any video has a job (t2v started)
+        // AND whether any local card is regenerating (which should keep us in scripts mode)
+          const localRegen = regeneratingRef.current;
           const hasJob = (vidRes.data.videos || []).some(v => v.job);
           const hasScript = (vidRes.data.videos || []).some(v => v.script);
           let newPhase;
-          if (hasJob) newPhase = 'videos';
-          else if (hasScript) newPhase = 'scripts';
+          if (hasJob && !localRegen) newPhase = 'videos';
+          else if (hasScript || localRegen) newPhase = 'scripts';
           else newPhase = 'setup';
           // Don't override phase to 'videos' while the user is actively adding
           // new scripts. handleAddNewVideos sets phase='scripts' before this
@@ -544,6 +551,7 @@ function ProjectDetail() {
 
   const handleRegenScript = async (videoIndex) => {
     // Set regenerating flag so the card shows a spinner instead of disappearing
+    regeneratingRef.current = true;
     setVideos(prev => prev.map(v =>
       v.index === videoIndex ? { ...v, regenerating: true } : v
     ));
@@ -551,6 +559,7 @@ function ProjectDetail() {
       const res = await api.post(`/projects/${id}/videos/${videoIndex}/regenerate-script`);
       if (res.data.status === 'success') {
         showToast(`Script #${videoIndex + 1} regenerated!`);
+        regeneratingRef.current = false;
         // Replace with new script data immediately
         setVideos(prev => prev.map(v =>
           v.index === videoIndex ? {
@@ -566,6 +575,7 @@ function ProjectDetail() {
       }
     } catch (e) {
       showToast('Regeneration failed', 'error');
+      regeneratingRef.current = false;
       setVideos(prev => prev.map(v =>
         v.index === videoIndex ? { ...v, regenerating: false } : v
       ));
