@@ -214,15 +214,15 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
         </div>
         <div className="p-4 flex flex-col gap-3 flex-1">
           <div>
-            <h3 className="text-sm font-bold text-[#F5F5F5] line-clamp-2 leading-snug">
+            <h3 className="text-lg font-bold text-[#F5F5F5] line-clamp-2 leading-snug">
               {script?.title || `Video ${index + 1}`}
             </h3>
-            {dateStr && <p className="text-[10px] text-[#5F6772] mt-1">{dateStr}</p>}
+            {dateStr && <p className="text-sm text-[#5F6772] mt-1">{dateStr}</p>}
           </div>
-          <p className="text-[11px] text-[#9AA0A6] line-clamp-4 leading-relaxed">
+          <p className="text-sm text-[#9AA0A6] line-clamp-4 leading-relaxed">
             {script?.content?.substring(0, 300) || 'No script yet'}
           </p>
-          <div className="flex items-center gap-3 text-[10px] text-[#5F6772] mt-auto flex-wrap">
+          <div className="flex items-center gap-3 text-sm text-[#5F6772] mt-auto flex-wrap">
             <span>{script?.scenes?.length || 0} scenes</span>
             {displayStyle && displayStyle !== 'none' && (
               <span className="text-[#C6F11D] capitalize">{displayStyle.replace(/_/g, ' ')}</span>
@@ -244,7 +244,7 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
           {onGenerateVideo && (
             <button
               onClick={() => onGenerateVideo(video.index)}
-              className="neo-btn-primary flex items-center gap-1.5 px-3 py-1.5 text-[11px]"
+              className="neo-btn-primary flex items-center gap-1.5 px-3 py-1.5 text-sm"
             >
               <Video className="h-3 w-3" />
               Generate Video
@@ -253,7 +253,7 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
           {onRegenScript && !video.regenerating && (
             <button
               onClick={() => onRegenScript(video.index)}
-              className="neo-btn-ghost flex items-center gap-1.5 px-3 py-1.5 text-[11px]"
+              className="neo-btn-ghost flex items-center gap-1.5 px-3 py-1.5 text-sm"
             >
               <RefreshCw className="h-3 w-3" />
               Regen Script
@@ -262,7 +262,7 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
           {onEdit && (
             <button
               onClick={onEdit}
-              className="neo-btn-ghost flex items-center gap-1.5 px-3 py-1.5 text-[11px]"
+              className="neo-btn-ghost flex items-center gap-1.5 px-3 py-1.5 text-sm"
             >
               <Settings className="h-3 w-3" />
               Settings
