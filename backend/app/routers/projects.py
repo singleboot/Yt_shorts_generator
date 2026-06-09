@@ -1189,7 +1189,10 @@ def generate_single_video(project_id: int, video_index: int, db: Session = Depen
     db.commit()
 
     schedule_settings = _json.loads(project.schedule_settings) if isinstance(project.schedule_settings, str) else project.schedule_settings
-    video_count = schedule_settings.get("video_count", 1) if isinstance(schedule_settings, dict) else 1
+    # Use actual script count, not schedule_settings.video_count (which is the last batch size)
+    video_count = db.query(func.count(models.Script.id)).filter(
+        models.Script.project_id == project_id
+    ).scalar() or 1
 
     # Resume-from-checkpoint: if a previous video job for this same
     # (project, video_index) ended in cancelled/failed and recorded a
