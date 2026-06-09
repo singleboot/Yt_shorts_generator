@@ -294,23 +294,20 @@ function ProjectDetail() {
           }
       }
       if (vidRes && vidRes.data) {
-        // Don't overwrite local placeholders while scripts are generating
+        // Always merge: preserve local regenerating/generating flags while overlaying backend data
         const incomingVideos = vidRes.data.videos || [];
-        const hasLocalGenerating = generatingScriptsRef.current || videos.some(v => v.generating || v.regenerating);
-        if (hasLocalGenerating) {
-          // Merge: keep existing placeholders/regenerating cards, overlay backend data
-          setVideos(prev => {
-            const merge = [...prev];
-            for (const inc of incomingVideos) {
-              const idx = merge.findIndex(v => v.index === inc.index);
-              if (idx >= 0) merge[idx] = { ...merge[idx], ...inc, regenerating: false };
-              else merge.push(inc);
+        setVideos(prev => {
+          const merge = [...prev];
+          for (const inc of incomingVideos) {
+            const idx = merge.findIndex(v => v.index === inc.index);
+            if (idx >= 0) {
+              merge[idx] = { ...inc, regenerating: merge[idx].regenerating || false, generating: merge[idx].generating || false };
+            } else {
+              merge.push(inc);
             }
-            return merge;
-          });
-        } else {
-          setVideos(incomingVideos);
-        }
+          }
+          return merge;
+        });
           // Always derive videoCount from the actual list length - never trust
           // the backend's video_count field (it can drift from schedule_settings).
           // Fall back to the backend's hint only if the list is empty.

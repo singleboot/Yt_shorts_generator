@@ -268,6 +268,15 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
               Settings
             </button>
           )}
+          {onDelete && (
+            <button
+              onClick={onDelete}
+              className="neo-btn-danger p-1.5 ml-auto"
+              title="Delete"
+            >
+              <Trash2 className="h-3.5 w-3.5 text-[#FF5757]" />
+            </button>
+          )}
         </div>
       </div>
     );
