@@ -101,6 +101,8 @@ class Project(Base):
     scripts = relationship("Script", back_populates="project", cascade="all, delete-orphan")
     jobs = relationship("Job", back_populates="project", cascade="all, delete-orphan")
     uploads = relationship("Upload", back_populates="project", cascade="all, delete-orphan")
+    prompt_logs = relationship("PromptLog", back_populates="project", cascade="all, delete-orphan")
+    research_logs = relationship("ResearchLog", back_populates="project", cascade="all, delete-orphan")
     youtube_channel = relationship("YouTubeChannel", back_populates="projects")
 
 class Script(Base):
@@ -234,6 +236,8 @@ class PromptLog(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
 
+    project = relationship("Project", back_populates="prompt_logs")
+
 
 class ResearchLog(Base):
     """One row per research call (web search, URL summary, topic suggestion).
@@ -270,3 +274,5 @@ class ResearchLog(Base):
     duration_ms = Column(Integer, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project", back_populates="research_logs")
