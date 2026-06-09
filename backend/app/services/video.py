@@ -294,32 +294,43 @@ class VideoService:
                     f.write(f"file '{clip.resolve()}'\n")
 
             intermediate = output.parent / "concat_intermediate.mp4"
+            # Check if any clip has audio — if not, skip audio encoding
+            has_audio = self._any_clip_has_audio(clips)
             cmd = [
                 "ffmpeg", "-y", "-f", "concat", "-safe", "0",
                 "-i", str(concat_list),
                 "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-                "-c:a", "aac", "-b:a", "128k",
                 "-pix_fmt", "yuv420p",
                 "-r", "30",
                 "-movflags", "+faststart",
-                str(intermediate)
             ]
+            if has_audio:
+                cmd.extend(["-c:a", "aac", "-b:a", "128k"])
+            else:
+                cmd.extend(["-an"])
+            cmd.append(str(intermediate))
             subprocess.run(cmd, check=True, capture_output=True)
             shutil.move(str(intermediate), str(output))
             return True
         except subprocess.CalledProcessError as e:
-            print(f"Concat failed, falling back to moviepy: {e}")
+            print(f"Concat failed: {e.stderr.decode() if e.stderr else e}", flush=True)
+            return False
+
+    def _any_clip_has_audio(self, clips: List[Path]) -> bool:
+        """Check if any clip has an audio stream."""
+        import subprocess as sp
+        for clip in clips[:1]:  # check first clip only
             try:
-                video_clips = [moviepy.VideoFileClip(str(c)) for c in clips]
-                final = moviepy.concatenate_videoclips(video_clips, method="compose")
-                final.write_videofile(str(output), fps=30, codec="libx264",
-                                       audio_codec="aac", logger=None)
-                for vc in video_clips:
-                    vc.close()
-                return True
-            except Exception as e2:
-                print(f"moviepy fallback also failed: {e2}")
-                return False
+                result = sp.run(
+                    ["ffprobe", "-v", "error", "-select_streams", "a",
+                     "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(clip)],
+                    capture_output=True, text=True, timeout=5
+                )
+                if "audio" in result.stdout:
+                    return True
+            except Exception:
+                pass
+        return False
 
     def _concat_with_xfade(
         self,

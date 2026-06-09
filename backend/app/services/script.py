@@ -293,19 +293,21 @@ Respond ONLY in valid JSON. No markdown, no commentary, no code blocks — just 
 
     def _topup_scenes(self, script_data: Dict, num_scenes: int, per_scene: int,
                       topic: str, category: str) -> Dict:
-        """Pad scenes to num_scenes if LLM truncated (common at 22-30 scene requests).
+        """Pad scenes to num_scenes if LLM truncated.
 
         Adds generic-but-valid filler scenes with proper structure so the
         downstream pipeline (t2v, audio, assembly) has the expected count.
-        Each filler is a slow contemplative shot matching the topic's tone.
         """
         scenes = script_data.get("scenes") or []
-        if not isinstance(scenes, list) or len(scenes) >= num_scenes:
+        if not isinstance(scenes, list):
+            scenes = []
+        # Remove invalid scenes (non-dict or missing required keys)
+        scenes = [s for s in scenes if isinstance(s, dict) and s.get("narration_text")]
+        if len(scenes) >= num_scenes:
+            script_data["scenes"] = scenes[:num_scenes]
             return script_data
-        if len(scenes) < 3:
-            return script_data  # too few to even start a real narrative
 
-        existing_nums = {s.get("scene_number") for s in scenes if isinstance(s, dict)}
+        existing_nums = {s.get("scene_number") for s in scenes}
         camera_moves = [
             "Slow pan across", "Slow push-in on", "Static wide shot of",
             "Slow orbit around", "Slow dolly forward toward",
