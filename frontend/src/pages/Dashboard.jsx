@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Plus, Film, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Clock, Activity, Youtube, Archive, RotateCcw, Power, PowerOff } from 'lucide-react';
+import { Plus, Film, Calendar, Sparkles, Trash2, CheckCircle, AlertCircle, Clock, Activity, Youtube, Archive, RotateCcw, Power, PowerOff, Send } from 'lucide-react';
 import api from '../api/client';
 
 const STATUS_COLORS = {
