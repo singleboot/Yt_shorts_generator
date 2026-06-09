@@ -100,7 +100,7 @@ class Project(Base):
     # Relationships
     scripts = relationship("Script", back_populates="project", cascade="all, delete-orphan")
     jobs = relationship("Job", back_populates="project", cascade="all, delete-orphan")
-    uploads = relationship("Upload", back_populates="project")
+    uploads = relationship("Upload", back_populates="project", cascade="all, delete-orphan")
     youtube_channel = relationship("YouTubeChannel", back_populates="projects")
 
 class Script(Base):
