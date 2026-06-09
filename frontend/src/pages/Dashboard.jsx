@@ -292,17 +292,40 @@ function Dashboard() {
           <div className="neo-card p-6 max-w-md w-full mx-4" onClick={e => e.stopPropagation()}>
             {showDeleteModal.status === 'active' ? (
               <>
-                <h3 className="neo-title text-lg mb-2">Cannot Delete Active Project</h3>
+                <h3 className="neo-title text-lg mb-2">Delete Active Project</h3>
                 <p className="text-[#9AA0A6] text-sm mb-1">
                   <span className="text-[#F5F5F5] font-semibold">"{showDeleteModal.name}"</span> is currently <span className="neo-badge neo-badge-green text-[10px]">active</span>.
                 </p>
-                <p className="text-[#9AA0A6] text-sm mb-6">Deactivate it first using the power button on the project card, then delete.</p>
-                <button
-                  onClick={() => setShowDeleteModal(null)}
-                  className="neo-btn-secondary py-2.5 w-full flex items-center justify-center gap-2"
-                >
-                  Got it
-                </button>
+                <p className="text-[#9AA0A6] text-sm mb-6">Deactivate it first, or delete directly (will deactivate automatically).</p>
+                <div className="flex flex-col gap-2">
+                  <button
+                    onClick={() => confirmDelete('archive')}
+                    className="neo-btn-secondary py-2.5 flex items-center justify-center gap-2"
+                  >
+                    <Archive className="h-4 w-4" />
+                    Archive (compress & keep for later)
+                  </button>
+                  <button
+                    onClick={async () => {
+                      await api.put(`/projects/${showDeleteModal.id}`, { status: 'paused' });
+                      await api.delete(`/projects/${showDeleteModal.id}?action=delete`);
+                      showToast(`Deleted "${showDeleteModal.name}"`);
+                      setShowDeleteModal(null);
+                      loadData();
+                    }}
+                    className="py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 text-white"
+                    style={{background:'#FF5757'}}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete Permanently
+                  </button>
+                  <button
+                    onClick={() => setShowDeleteModal(null)}
+                    className="neo-btn-ghost py-2 text-sm text-[#9AA0A6]"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </>
             ) : (
               <>
