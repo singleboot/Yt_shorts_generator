@@ -367,8 +367,10 @@ class VisualsService:
             workflow["5"]["inputs"]["strength_clip"] = round(lora_strength * 0.75, 3)
             print(f"[t2v] Injecting style LoRA: {style_lora_path} @ model={lora_strength} clip={round(lora_strength*0.75,3)} (from input '{lora_name}')", flush=True)
         else:
-            # No style - use Ghibli LoRA at 0.0 strength (effectively disabled)
-            workflow["5"]["inputs"]["lora_name"] = "ltx2\\ltx-2-19b-ghibli-style-lora.safetensors"
+            # No style — use a known-existing LoRA at 0.0 strength to keep the
+            # LoraLoader node happy without applying any stylistic effect.
+            # Must be a file that actually exists in models/loras/ltx2/
+            workflow["5"]["inputs"]["lora_name"] = "ltx2\\ltx-2-19b-distilled-lora-384.safetensors"
             workflow["5"]["inputs"]["strength_model"] = 0.0
             workflow["5"]["inputs"]["strength_clip"] = 0.0
             if lora_name:
