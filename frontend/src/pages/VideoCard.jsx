@@ -347,7 +347,14 @@ function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onD
             </div>
             <div className="w-full space-y-2">
               <div className="flex justify-between text-[11px]">
-                <span className="text-[#9AA0A6]">{job?.logs?.split(' - ')[0] || 'Processing...'}</span>
+                <span className="text-[#9AA0A6]">
+                  {(() => {
+                    const log = job?.logs || '';
+                    const sceneMatch = log.match(/Scene (\d+)\/(\d+)/);
+                    if (sceneMatch) return `Scene ${sceneMatch[1]}/${sceneMatch[2]}`;
+                    return log.split(' - ')[0] || 'Generating...';
+                  })()}
+                </span>
                 <span className="text-[#F5F5F5] font-semibold">{progress}%</span>
               </div>
               <div className="neo-progress">
