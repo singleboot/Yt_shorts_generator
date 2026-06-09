@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Sparkles, Send, CheckCircle, AlertCircle, Loader2, Youtube, ChevronDown, ChevronUp, Hash, Play, Globe, Clock, Archive, FileText, Video, ChevronLeft, ChevronRight, Palette, Mic, Music, Volume2, Square, Captions, Type, Plus, Brush, Trash2, Blend } from 'lucide-react';
+import { ArrowLeft, Sparkles, Send, CheckCircle, AlertCircle, Loader2, Youtube, ChevronDown, ChevronUp, Hash, Play, Globe, Clock, Archive, FileText, Video, ChevronLeft, ChevronRight, Palette, Mic, Music, Volume2, Square, Captions, Type, Plus, Brush, Trash2, Blend, Calendar } from 'lucide-react';
 import api from '../api/client';
 import axios from 'axios';
 import VideoCard from './VideoCard';
 import EditVideoModal from './EditVideoModal';
+import ScheduleCalendar from '../components/ScheduleCalendar';
 import { CATEGORIES, SUBJECTS } from '../constants/categories';
 import { AI_STYLES, VOICES, MUSIC_GENRES, STYLE_LORA_PATHS } from '../constants/production';
 
@@ -1262,6 +1263,15 @@ function ProjectDetail() {
                     <Captions className="h-3.5 w-3.5" />
                     Captions {captionStyle !== 'standard' ? `(${captionStyle})` : ''}
                   </button>
+                  <button
+                    onClick={() => setProductionTab(productionTab === 'calendar' ? null : 'calendar')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all duration-150 ${
+                      productionTab === 'calendar' ? 'bg-[#C6F11D] text-[#050608]' : 'bg-[#0E1116] text-[#9AA0A6] border border-[#252A33] hover:border-[#C6F11D]'
+                    }`}
+                  >
+                    <Calendar className="h-3.5 w-3.5" />
+                    Schedule
+                  </button>
                 </div>
 
                 {productionTab === 'style' && (
@@ -1522,6 +1532,12 @@ function ProjectDetail() {
                         className="w-full accent-[#C6F11D]"
                       />
                     </div>
+                  </div>
+                )}
+
+                {productionTab === 'calendar' && (
+                  <div className="mb-4">
+                    <ScheduleCalendar projectId={id} />
                   </div>
                 )}
               </div>

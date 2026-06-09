@@ -1458,6 +1458,83 @@ def list_video_scenes(project_id: int, video_index: int,
         })
     return out
 
+# ── Calendar endpoints ──────────────────────────────────────────────────
+
+@router.get("/{project_id}/calendar", response_model=dict)
+def get_project_calendar(project_id: int, year: int, month: int, db: Session = Depends(get_db)):
+    """Return uploads grouped by day for a given month.
+    Response: { "days": { "1": 3, "5": 1, ... }, "uploads": [...] } """
+    from datetime import date, timedelta
+    from calendar import monthrange
+
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    start = date(year, month, 1)
+    _, last = monthrange(year, month)
+    end = date(year, month, last)
+
+    uploads = db.query(models.Upload).filter(
+        models.Upload.project_id == project_id,
+        models.Upload.scheduled_for >= start,
+        models.Upload.scheduled_for <= end + timedelta(days=1),
+    ).order_by(models.Upload.scheduled_for).all()
+
+    days = {}
+    upload_list = []
+    for u in uploads:
+        d = u.scheduled_for.day if u.scheduled_for else None
+        if d:
+            days[str(d)] = days.get(str(d), 0) + 1
+        upload_list.append({
+            "id": u.id,
+            "script_id": u.script_id,
+            "title": u.title,
+            "status": u.status,
+            "scheduled_for": u.scheduled_for.isoformat() if u.scheduled_for else None,
+            "youtube_video_id": u.youtube_video_id,
+            "video_path": u.video_path,
+        })
+
+    return {"days": days, "uploads": upload_list}
+
+
+@router.get("/{project_id}/calendar/{datestr}", response_model=dict)
+def get_project_calendar_day(project_id: int, datestr: str, db: Session = Depends(get_db)):
+    """Return detailed uploads for a specific day (YYYY-MM-DD)."""
+    from datetime import date, datetime as dt
+
+    try:
+        d = dt.strptime(datestr, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    uploads = db.query(models.Upload).filter(
+        models.Upload.project_id == project_id,
+        models.Upload.scheduled_for >= dt(d.year, d.month, d.day),
+        models.Upload.scheduled_for < dt(d.year, d.month, d.day) + timedelta(days=1),
+    ).order_by(models.Upload.scheduled_for).all()
+
+    return {
+        "date": datestr,
+        "uploads": [{
+            "id": u.id,
+            "script_id": u.script_id,
+            "title": u.title,
+            "status": u.status,
+            "scheduled_for": u.scheduled_for.isoformat() if u.scheduled_for else None,
+            "time": u.scheduled_for.strftime("%H:%M") if u.scheduled_for else None,
+            "youtube_video_id": u.youtube_video_id,
+            "video_path": u.video_path,
+        } for u in uploads],
+    }
+
+
 def _project_to_dict(project):
     import json as _json
     def _parse(val):
