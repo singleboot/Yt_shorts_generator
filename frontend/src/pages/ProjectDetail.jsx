@@ -296,21 +296,26 @@ function ProjectDetail() {
       if (vidRes && vidRes.data) {
         // Always merge: preserve local regenerating/generating flags while overlaying backend data
         const incomingVideos = vidRes.data.videos || [];
+        const incomingIndices = new Set(incomingVideos.map(v => v.index));
         setVideos(prev => {
-          const merge = [...prev];
+          const merge = [];
           for (const inc of incomingVideos) {
-            const idx = merge.findIndex(v => v.index === inc.index);
-            if (idx >= 0) {
-              const local = merge[idx];
-              // If locally regenerating, keep the spinner card — don't let
-              // stale backend data (old job, missing script) overwrite it.
-              if (local.regenerating) continue;
-              if (local.generating) continue;
-              merge[idx] = { ...inc };
+            const local = prev.find(v => v.index === inc.index);
+            if (local && (local.regenerating || local.generating)) {
+              // Keep the spinner card, skip backend overlay
+              merge.push(local);
             } else {
               merge.push(inc);
             }
           }
+          // Preserve any local-only cards that aren't in the backend yet
+          for (const v of prev) {
+            if (!incomingIndices.has(v.index) && (v.generating || v.regenerating)) {
+              merge.push(v);
+            }
+          }
+          // Sort by index to maintain order
+          merge.sort((a, b) => a.index - b.index);
           return merge;
         });
           // Always derive videoCount from the actual list length - never trust
