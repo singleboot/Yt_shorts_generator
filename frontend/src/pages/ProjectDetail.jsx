@@ -327,13 +327,13 @@ function ProjectDetail() {
           // the backend's video_count field (it can drift from schedule_settings).
           // Fall back to the backend's hint only if the list is empty.
         setVideoCount(incomingVideos.length > 0 ? incomingVideos.length : (vidRes.data.video_count || 1));
-        // Detect phase based on whether any video has a job (t2v started)
+        // Detect phase based on whether any video has an ACTIVE job (t2v started)
         // AND whether any local card is regenerating (which should keep us in scripts mode)
           const localRegen = regeneratingRef.current;
-          const hasJob = (vidRes.data.videos || []).some(v => v.job);
+          const hasActiveJob = (vidRes.data.videos || []).some(v => v.job && (v.job.status === 'running' || v.job.status === 'queued'));
           const hasScript = (vidRes.data.videos || []).some(v => v.script);
           let newPhase;
-          if (hasJob && !localRegen) newPhase = 'videos';
+          if (hasActiveJob && !localRegen) newPhase = 'videos';
           else if (hasScript || localRegen) newPhase = 'scripts';
           else newPhase = 'setup';
           // Don't override phase to 'videos' while the user is actively adding
