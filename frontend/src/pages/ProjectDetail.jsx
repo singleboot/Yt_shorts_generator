@@ -114,6 +114,7 @@ function ProjectDetail() {
 
   // Production settings (style/voice/music)
   const [productionTab, setProductionTab] = useState(null);
+  const [showCalendar, setShowCalendar] = useState(false);
   const [selectedStyle, setSelectedStyle] = useState('none');
   const [loraStrength, setLoraStrength] = useState(0.8);
   const [selectedVoice, setSelectedVoice] = useState('en-US-AriaNeural');
@@ -805,6 +806,13 @@ function ProjectDetail() {
               {phase === 'videos' ? <Video className="h-3 w-3" /> : phase === 'scripts' ? <FileText className="h-3 w-3" /> : null}
               {phase === 'setup' ? 'Setup' : phase === 'scripts' ? 'Scripts' : 'Videos'}
             </span>
+            <button
+              onClick={() => setShowCalendar(true)}
+              className="neo-card-hover flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm text-[#9AA0A6] hover:text-[#F5F5F5] mr-1"
+            >
+              <Calendar className="h-4 w-4" />
+              Schedule
+            </button>
             <button onClick={handleSaveProject} className="neo-btn-primary flex items-center gap-1.5 text-sm px-3 py-1.5">
               <CheckCircle className="h-4 w-4" />
               Save
@@ -1699,6 +1707,8 @@ function ProjectDetail() {
           }}
         />
       )}
+
+      <ScheduleCalendar projectId={id} open={showCalendar} onClose={() => setShowCalendar(false)} />
     </div>
   );
 }
