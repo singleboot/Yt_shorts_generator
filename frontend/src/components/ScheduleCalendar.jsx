@@ -13,8 +13,6 @@ const STATUS_ICON = {
 };
 
 function ScheduleCalendar({ projectId, open, onClose }) {
-  if (!open) return null;
-
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
@@ -22,7 +20,10 @@ function ScheduleCalendar({ projectId, open, onClose }) {
   const [selectedDay, setSelectedDay] = useState(null);
   const [dayUploads, setDayUploads] = useState(null);
 
+  if (!open) return null;
+
   const loadMonth = useCallback(async () => {
+    if (!projectId) return;
     try {
       const res = await api.get(`/projects/${projectId}/calendar`, {
         params: { year, month: month + 1 },
