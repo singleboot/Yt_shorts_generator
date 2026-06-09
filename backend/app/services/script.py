@@ -289,7 +289,7 @@ Respond ONLY in valid JSON. No markdown, no commentary, no code blocks — just 
             return script_data
         except json.JSONDecodeError:
             # Fallback: return raw text structured manually
-            return self._fallback_parse_script(response, topic)
+            return self._fallback_parse_script(response, topic, num_scenes, per_scene)
 
     def _topup_scenes(self, script_data: Dict, num_scenes: int, per_scene: int,
                       topic: str, category: str) -> Dict:
@@ -442,17 +442,24 @@ Respond in JSON format with keys: title, description, tags, hashtags"""
                 "hashtags": ["#shorts", "#facts", f"#{category}", "#viral", "#trending"]
             }
     
-    def _fallback_parse_script(self, text: str, topic: str) -> Dict:
+    def _fallback_parse_script(self, text: str, topic: str, num_scenes: int = 4, per_scene: int = 6) -> Dict:
         """Fallback if JSON parsing fails."""
         lines = text.strip().split('\n')
+        scenes = []
+        for i in range(num_scenes):
+            narration = lines[i] if i < len(lines) else f"Continuing the story of {topic}."
+            scenes.append({
+                "scene_number": i + 1,
+                "visual_description": f"Scene {i+1} about {topic}",
+                "narration_text": narration,
+                "duration_seconds": per_scene,
+            })
         return {
             "title": topic,
             "description": f"Learn about {topic} in this amazing short video!",
             "hashtags": ["#shorts", f"#{topic.replace(' ', '')}", "#facts"],
             "hook": lines[0] if lines else topic,
-            "scenes": [
-                {"scene_number": 1, "visual_description": topic, "narration_text": text, "duration_seconds": 45}
-            ],
+            "scenes": scenes,
             "call_to_action": "Like and subscribe for more!"
         }
 
