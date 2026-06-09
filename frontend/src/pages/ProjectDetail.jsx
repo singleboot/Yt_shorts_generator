@@ -331,9 +331,11 @@ function ProjectDetail() {
         // AND whether any local card is regenerating (which should keep us in scripts mode)
           const localRegen = regeneratingRef.current;
           const hasActiveJob = (vidRes.data.videos || []).some(v => v.job && (v.job.status === 'running' || v.job.status === 'queued'));
+          const hasAnyJob = (vidRes.data.videos || []).some(v => v.job);
           const hasScript = (vidRes.data.videos || []).some(v => v.script);
           let newPhase;
           if (hasActiveJob && !localRegen) newPhase = 'videos';
+          else if (hasAnyJob && !localRegen) newPhase = 'videos';
           else if (hasScript || localRegen) newPhase = 'scripts';
           else newPhase = 'setup';
           // Don't override phase to 'videos' while the user is actively adding
