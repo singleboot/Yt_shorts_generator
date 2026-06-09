@@ -1542,12 +1542,6 @@ function ProjectDetail() {
                     </div>
                   </div>
                 )}
-
-                {productionTab === 'calendar' && (
-                  <div className="mb-4">
-                    <ScheduleCalendar projectId={id} />
-                  </div>
-                )}
               </div>
             </div>
           )}

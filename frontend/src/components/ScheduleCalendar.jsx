@@ -20,8 +20,6 @@ function ScheduleCalendar({ projectId, open, onClose }) {
   const [selectedDay, setSelectedDay] = useState(null);
   const [dayUploads, setDayUploads] = useState(null);
 
-  if (!open) return null;
-
   const loadMonth = useCallback(async () => {
     if (!projectId) return;
     try {
@@ -35,6 +33,8 @@ function ScheduleCalendar({ projectId, open, onClose }) {
   }, [projectId, year, month]);
 
   useEffect(() => { loadMonth(); }, [loadMonth]);
+
+  if (!open) return null;
 
   const loadDay = (day) => {
     setSelectedDay(day);
