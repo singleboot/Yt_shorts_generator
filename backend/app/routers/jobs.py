@@ -84,14 +84,30 @@ async def scheduler_service_comfyui_interrupt():
 
 @router.post("/clear-finished", response_model=dict)
 def clear_finished_jobs(db: Session = Depends(get_db)):
-    deleted = db.query(models.Job).filter(
+    ids = [row[0] for row in db.query(models.Job.id).filter(
         models.Job.status.in_(["completed", "failed", "cancelled"])
-    ).delete(synchronize_session=False)
+    ).all()]
+    if ids:
+        db.query(models.PromptLog).filter(models.PromptLog.job_id.in_(ids)).update(
+            {models.PromptLog.job_id: None}, synchronize_session=False
+        )
+        db.query(models.ResearchLog).filter(models.ResearchLog.job_id.in_(ids)).update(
+            {models.ResearchLog.job_id: None}, synchronize_session=False
+        )
+        deleted = db.query(models.Job).filter(models.Job.id.in_(ids)).delete(synchronize_session=False)
+        db.commit()
+        return {"deleted": deleted}
     db.commit()
-    return {"deleted": deleted}
+    return {"deleted": 0}
 
 @router.post("/clear-all", response_model=dict)
 def clear_all_jobs(db: Session = Depends(get_db)):
+    db.query(models.PromptLog).update(
+        {models.PromptLog.job_id: None}, synchronize_session=False
+    )
+    db.query(models.ResearchLog).update(
+        {models.ResearchLog.job_id: None}, synchronize_session=False
+    )
     deleted = db.query(models.Job).delete(synchronize_session=False)
     db.commit()
     return {"deleted": deleted}

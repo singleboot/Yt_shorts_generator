@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Activity, CheckCircle, XCircle, Clock, AlertCircle, RotateCw, Trash2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Activity, CheckCircle, XCircle, Clock, AlertCircle, RotateCw, Trash2, ArrowLeft } from 'lucide-react';
 import api from '../api/client';
 
 function JobMonitor() {
+  const navigate = useNavigate();
   const [jobs, setJobs] = useState([]);
   const [filter, setFilter] = useState('all');
 
@@ -63,9 +65,18 @@ function JobMonitor() {
   return (
     <div className="p-8">
       <div className="flex justify-between items-center mb-8">
-        <div>
-          <h2 className="neo-title text-3xl">Job Monitor</h2>
-          <p className="text-sm text-[#9AA0A6] mt-1">Track generation and upload progress</p>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => navigate(-1)}
+            className="neo-card-hover p-2 rounded-xl text-[#9AA0A6] hover:text-[#F5F5F5]"
+            title="Back"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <div>
+            <h2 className="neo-title text-3xl">Job Monitor</h2>
+            <p className="text-sm text-[#9AA0A6] mt-1">Track generation and upload progress</p>
+          </div>
         </div>
         <div className="flex gap-2">
           {['all', 'running', 'queued', 'completed', 'failed'].map((f) => (
