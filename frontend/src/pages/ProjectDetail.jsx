@@ -296,7 +296,20 @@ function ProjectDetail() {
       if (vidRes && vidRes.data) {
         // Don't overwrite local placeholders while scripts are generating
         const incomingVideos = vidRes.data.videos || [];
-        setVideos(incomingVideos);
+        if (generatingScriptsRef.current) {
+          // Merge: keep existing placeholders, overlay backend data
+          setVideos(prev => {
+            const merge = [...prev];
+            for (const inc of incomingVideos) {
+              const idx = merge.findIndex(v => v.index === inc.index);
+              if (idx >= 0) merge[idx] = inc;
+              else merge.push(inc);
+            }
+            return merge;
+          });
+        } else {
+          setVideos(incomingVideos);
+        }
           // Always derive videoCount from the actual list length - never trust
           // the backend's video_count field (it can drift from schedule_settings).
           // Fall back to the backend's hint only if the list is empty.
@@ -443,11 +456,23 @@ function ProjectDetail() {
       showToast('Enter a URL', 'warning');
       return;
     }
-    // Step 1: append N new scripts at max(video_index)+1..+N. Do NOT queue
-    // video jobs - the user wants to review/regen each script first, then
-    // click 'Generate Video' per card.
+
+    // Create placeholder cards immediately so the user sees cards appear
+    const maxIdx = videos.reduce((max, v) => Math.max(max, v.index != null ? v.index : 0), -1);
+    const placeholders = Array.from({ length: genCount }, (_, i) => ({
+      index: maxIdx + 1 + i,
+      generating: true,
+      generatingDuration: duration,
+      script: null, upload: null, job: null, overrides: null,
+    }));
+    setVideos(prev => [...prev, ...placeholders]);
+    setPhase('scripts');
     setGeneratingScripts(true);
     generatingScriptsRef.current = true;
+
+    const controller = new AbortController();
+    cancelScriptRef.current = controller;
+
     try {
       const payload = { video_count: genCount, duration, source_type: 'topic', category };
       if (sourceType === 'topic') {
@@ -457,17 +482,13 @@ function ProjectDetail() {
         payload.url = url.trim();
         payload.category = category || 'tech';
       }
-      const res = await api.post(`/projects/${id}/generate-scripts`, payload);
+      const res = await api.post(`/projects/${id}/generate-scripts`, payload, { signal: controller.signal });
       if (res.data.status === 'success') {
         showToast(`+ ${res.data.scripts.length} new script(s) ready. Review, then click Generate Video on each.`);
-        // Keep generatingScriptsRef true through loadProject() so the
-        // phase guard forces 'scripts' mode. Without this, loadProject()
-        // sees hasJob=true from older videos and switches to 'videos',
-        // hiding the Generate Video button.
-        setPhase('scripts');
+        generatingScriptsRef.current = false;
         setPage(1);
-        // Update videos from the API response directly so the real
-        // script cards show immediately, even before the next poll.
+        setVideoCount(res.data.video_count || 1);
+        // Replace placeholder cards with real script data
         setVideos(res.data.scripts.map(s => ({
           index: s.index,
           script: s,
@@ -475,14 +496,21 @@ function ProjectDetail() {
           job: null,
           overrides: null,
         })));
+        setPhase('scripts');
         await loadProject();
       }
     } catch (e) {
-      const msg = e?.response?.data?.detail || 'Failed to add scripts';
-      showToast(msg, 'error');
+      if (axios.isCancel(e) || e?.code === 'ERR_CANCELED') {
+        showToast('Script generation cancelled', 'warning');
+      } else {
+        const msg = e?.response?.data?.detail || 'Failed to add scripts';
+        showToast(msg, 'error');
+      }
+      setVideos(prev => prev.filter(v => !v.generating));
     } finally {
       generatingScriptsRef.current = false;
       setGeneratingScripts(false);
+      cancelScriptRef.current = null;
     }
   };
 
