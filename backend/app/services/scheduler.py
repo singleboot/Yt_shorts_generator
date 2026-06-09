@@ -772,12 +772,17 @@ class SchedulerService:
             job.logs = f"Video {video_num}/{video_count} - Generating SEO metadata..."
             db.commit()
             
-            # 7. Generate SEO metadata
-            seo = run_async(script_service.generate_seo_metadata(
-                topic=topic,
-                category=project.category,
-                script_content=script.content
-            ))
+            # 7. Generate SEO metadata (non-critical — use script title as fallback)
+            seo = {}
+            try:
+                seo = run_async(script_service.generate_seo_metadata(
+                    topic=topic,
+                    category=project.category,
+                    script_content=script.content
+                ))
+            except Exception as e:
+                logging.warning("Video %s/%s - SEO generation failed (using fallback): %s",
+                    video_num, video_count, str(e)[:200])
             
             # Create an Upload record with status="done" (ready for manual YouTube upload)
             existing_upload = db.query(models.Upload).filter(
