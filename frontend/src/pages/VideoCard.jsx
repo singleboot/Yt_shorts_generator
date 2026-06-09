@@ -152,6 +152,26 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
 
   // SCRIPT MODE preview
   if (mode === 'script') {
+    if (video.regenerating) {
+      return (
+        <div className="neo-card overflow-hidden flex flex-col aspect-[5/8] transition-all duration-150 relative">
+          <div className="neo-titlebar-queued flex items-center justify-between">
+            <span className="flex items-center gap-1.5">
+              <span className="neo-dot neo-dot-clip animate-pulse" />
+              REGENERATING
+            </span>
+            <span className="text-[10px] opacity-70">#{serial}</span>
+          </div>
+          <div className="flex-1 flex flex-col items-center justify-center p-8 gap-3">
+            <Loader2 className="h-10 w-10 text-[#C6F11D] animate-spin" />
+            <div className="text-center">
+              <div className="text-[11px] text-[#C6F11D] font-semibold">Regenerating script</div>
+              <div className="text-[10px] text-[#5F6772] mt-0.5">~2–5 min</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
     if (video.generating) {
       return (
         <div className="neo-card overflow-hidden flex flex-col aspect-[5/8] transition-all duration-150 relative">
@@ -230,7 +250,7 @@ function VideoCard({ video, project, getStepLabel, onPost, onEdit, onDelete, mod
               Generate Video
             </button>
           )}
-          {onRegenScript && (
+          {onRegenScript && !video.regenerating && (
             <button
               onClick={() => onRegenScript(video.index)}
               className="neo-btn-ghost flex items-center gap-1.5 px-3 py-1.5 text-[11px]"

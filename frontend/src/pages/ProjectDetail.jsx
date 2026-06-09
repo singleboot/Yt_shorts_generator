@@ -296,13 +296,14 @@ function ProjectDetail() {
       if (vidRes && vidRes.data) {
         // Don't overwrite local placeholders while scripts are generating
         const incomingVideos = vidRes.data.videos || [];
-        if (generatingScriptsRef.current) {
-          // Merge: keep existing placeholders, overlay backend data
+        const hasLocalGenerating = generatingScriptsRef.current || videos.some(v => v.generating || v.regenerating);
+        if (hasLocalGenerating) {
+          // Merge: keep existing placeholders/regenerating cards, overlay backend data
           setVideos(prev => {
             const merge = [...prev];
             for (const inc of incomingVideos) {
               const idx = merge.findIndex(v => v.index === inc.index);
-              if (idx >= 0) merge[idx] = inc;
+              if (idx >= 0) merge[idx] = { ...merge[idx], ...inc, regenerating: false };
               else merge.push(inc);
             }
             return merge;
@@ -535,14 +536,32 @@ function ProjectDetail() {
   };
 
   const handleRegenScript = async (videoIndex) => {
+    // Set regenerating flag so the card shows a spinner instead of disappearing
+    setVideos(prev => prev.map(v =>
+      v.index === videoIndex ? { ...v, regenerating: true } : v
+    ));
     try {
       const res = await api.post(`/projects/${id}/videos/${videoIndex}/regenerate-script`);
       if (res.data.status === 'success') {
         showToast(`Script #${videoIndex + 1} regenerated!`);
+        // Replace with new script data immediately
+        setVideos(prev => prev.map(v =>
+          v.index === videoIndex ? {
+            index: v.index,
+            script: { ...res.data.script, scenes: res.data.script?.scenes || [] },
+            upload: v.upload,
+            job: null,
+            overrides: v.overrides,
+            regenerating: false,
+          } : v
+        ));
         loadProject();
       }
     } catch (e) {
       showToast('Regeneration failed', 'error');
+      setVideos(prev => prev.map(v =>
+        v.index === videoIndex ? { ...v, regenerating: false } : v
+      ));
     }
   };
 
