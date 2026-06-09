@@ -21,7 +21,6 @@ function ScheduleCalendar({ projectId, open, onClose }) {
   const [calendar, setCalendar] = useState({ days: {}, uploads: [] });
   const [selectedDay, setSelectedDay] = useState(null);
   const [dayUploads, setDayUploads] = useState(null);
-  const [loading, setLoading] = useState(false);
 
   const loadMonth = useCallback(async () => {
     try {
@@ -36,19 +35,14 @@ function ScheduleCalendar({ projectId, open, onClose }) {
 
   useEffect(() => { loadMonth(); }, [loadMonth]);
 
-  const loadDay = async (day) => {
+  const loadDay = (day) => {
     setSelectedDay(day);
-    setLoading(true);
-    try {
-      const d = String(day).padStart(2, '0');
-      const m = String(month + 1).padStart(2, '0');
-      const res = await api.get(`/projects/${projectId}/calendar/${year}-${m}-${d}`);
-      setDayUploads(res.data || { uploads: [] });
-    } catch (e) {
-      setDayUploads({ uploads: [] });
-    } finally {
-      setLoading(false);
-    }
+    const filtered = calendar.uploads.filter(u => {
+      if (!u.scheduled_for) return false;
+      const d = new Date(u.scheduled_for);
+      return d.getFullYear() === year && d.getMonth() === month && d.getDate() === day;
+    });
+    setDayUploads({ uploads: filtered });
   };
 
   const goTo = (y, m) => {
@@ -162,9 +156,7 @@ function ScheduleCalendar({ projectId, open, onClose }) {
                     {MONTHS[month]} {selectedDay}, {year}
                   </h3>
                 </div>
-                {loading ? (
-                  <div className="text-center py-8 text-[#5F6772] text-xs">Loading...</div>
-                ) : !dayUploads || dayUploads.uploads?.length === 0 ? (
+                {!dayUploads || dayUploads.uploads?.length === 0 ? (
                   <div className="text-center py-8 text-[#5F6772] text-xs">No videos scheduled for this day.</div>
                 ) : (
                   <div className="space-y-2">
