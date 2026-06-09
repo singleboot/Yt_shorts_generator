@@ -239,13 +239,6 @@ function ProjectDetail() {
     }
   };
 
-  useEffect(() => {
-    loadProject();
-    api.get('/settings/youtube/channels').then(res => setChannels(res.data || [])).catch(() => setChannels([]));
-    const interval = setInterval(loadProject, 2000);
-    return () => clearInterval(interval);
-  }, [id]);
-
   const loadProject = async () => {
     try {
       const [projRes, vidRes] = await Promise.all([
@@ -330,12 +323,12 @@ function ProjectDetail() {
         // Detect phase based on whether any video has an ACTIVE job (t2v started)
         // AND whether any local card is regenerating (which should keep us in scripts mode)
           const localRegen = regeneratingRef.current;
-          const hasActiveJob = (vidRes.data.videos || []).some(v => v.job && (v.job.status === 'running' || v.job.status === 'queued'));
-          const hasAnyJob = (vidRes.data.videos || []).some(v => v.job);
+          const hasRunningJob = (vidRes.data.videos || []).some(v => v.job && (v.job.status === 'running' || v.job.status === 'queued'));
+          const hasCompletedJob = (vidRes.data.videos || []).some(v => v.job && v.job.status === 'completed');
           const hasScript = (vidRes.data.videos || []).some(v => v.script);
           let newPhase;
-          if (hasActiveJob && !localRegen) newPhase = 'videos';
-          else if (hasAnyJob && !localRegen) newPhase = 'videos';
+          if (hasRunningJob && !localRegen) newPhase = 'videos';
+          else if (hasCompletedJob && !localRegen) newPhase = 'videos';
           else if (hasScript || localRegen) newPhase = 'scripts';
           else newPhase = 'setup';
           // Don't override phase to 'videos' while the user is actively adding

@@ -22,11 +22,49 @@ class AudioService:
     
     async def generate_voiceover(self, text: str, voice_id: str, output_path: Path,
                                   rate: str = "+0%", pitch: str = "+0Hz") -> bool:
-        return await comfy_tts.generate_voiceover(text, voice_id, output_path)
+        # Primary: ComfyUI Qwen3 TTS
+        try:
+            result = await comfy_tts.generate_voiceover(text, voice_id, output_path)
+            if result:
+                return True
+        except Exception as e:
+            print(f"ComfyUI TTS failed: {e}")
+        
+        # Fallback: edge-tts (Microsoft Edge online TTS)
+        try:
+            import edge_tts
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            communicate = edge_tts.Communicate(text, voice_id)
+            await communicate.save(str(output_path))
+            if output_path.exists() and output_path.stat().st_size > 1024:
+                print(f"[TTS] edge-tts fallback succeeded for {voice_id}")
+                return True
+        except Exception as e:
+            print(f"edge-tts fallback failed: {e}")
+        
+        return False
     
     async def generate_scene_voiceovers(self, scenes: List[Dict], voice_id: str,
                                         project_dir: Path) -> List[Dict]:
-        return await comfy_tts.generate_scene_voiceovers(scenes, voice_id, project_dir)
+        audio_assets = []
+        for i, scene in enumerate(scenes):
+            text = scene.get("narration_text", "")
+            if not text:
+                continue
+            output_path = project_dir / f"voice_{i+1:02d}.mp3"
+            success = await self.generate_voiceover(text, voice_id, output_path)
+            if success:
+                audio_assets.append({
+                    "scene_index": i,
+                    "type": "audio",
+                    "source": "tts",
+                    "local_path": str(output_path),
+                    "text": text,
+                    "voice_id": voice_id
+                })
+            else:
+                print(f"[TTS] WARNING: voiceover failed for scene {i+1}, skipping")
+        return audio_assets
     
     async def get_background_music(self, genre: str = "ambient", output_path: Path = None, 
                                     duration: int = 60) -> Optional[str]:

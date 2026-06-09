@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Settings, Clock, Loader2, Play, RefreshCw, Archive, Eye, X, Mic, Music, Sparkles, Trash2, Ban, StopCircle, Video } from 'lucide-react';
+import { Send, Settings, Clock, Loader2, Play, RefreshCw, Archive, Eye, X, Mic, Music, Sparkles, Trash2, Ban, StopCircle, Video, Youtube } from 'lucide-react';
 import api from '../api/client';
 import { VOICES, MUSIC_GENRES } from '../constants/production';
 

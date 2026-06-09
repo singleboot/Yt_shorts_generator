@@ -1170,19 +1170,19 @@ def regenerate_script(project_id: int, video_index: int, db: Session = Depends(g
         topic = research["topic"]
         context = research["context"]
 
-        script_data = run_async(script_service.generate_script(
-            topic=topic,
-            category=project.category,
-            context=context,
-            duration=duration,
-            voice_id=voice_id,
-            voice_custom=voice_custom,
-            music_genre=music_genre,
-            music_custom=music_custom
-        ))
+    script_data = run_async(script_service.generate_script(
+        topic=topic,
+        category=project.category,
+        context=context,
+        duration=duration,
+        voice_id=voice_id,
+        voice_custom=voice_custom,
+        music_genre=music_genre,
+        music_custom=music_custom
+    ))
 
-        max_serial = db.query(func.max(models.Script.global_serial)).scalar() or 0
-        music_prompt = script_data.get("music_prompt", "")
+    max_serial = db.query(func.max(models.Script.global_serial)).scalar() or 0
+    music_prompt = script_data.get("music_prompt", "")
     # Merge any pending per-video overrides (set before script existed) with music_prompt
     pending = schedule_settings.get("pending_overrides", {}) if isinstance(schedule_settings, dict) else {}
     pending_for_idx = pending.get(str(video_index), {}) or {}
