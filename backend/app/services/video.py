@@ -525,7 +525,7 @@ class VideoService:
         work_dir.mkdir(parents=True, exist_ok=True)
         out = work_dir / "outro_normalized.mp4"
         vf = (f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
-              f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:black,fps=25")
+              f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:black,fps=30")
         # Detect whether the source actually has an audio stream. ffmpeg
         # otherwise complains about `-b:a` being unused.
         has_audio = False
