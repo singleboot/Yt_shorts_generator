@@ -389,39 +389,55 @@ class VisualsService:
         # Serialize to JSON for queue submission
         workflow_str = json.dumps(workflow)
 
-        # Create PromptLog row BEFORE sending to ComfyUI so the console can
-        # see queued prompts in real time.
+        # Create or update PromptLog row BEFORE sending to ComfyUI so the console
+        # can see queued prompts in real time. Reuse existing row for the same
+        # scene on retry to avoid duplicate entries in the Prompt Console.
         log_id = None
         if db is not None and log_meta is not None:
             try:
                 from app.models import PromptLog
                 from datetime import datetime
-                row = PromptLog(
-                    project_id=log_meta.get("project_id", 0) or 0,
-                    job_id=log_meta.get("job_id"),
-                    scene_index=log_meta.get("scene_index", 0),
-                    scene_number=log_meta.get("scene_number", 1),
-                    raw_visual_description=log_meta.get("raw_visual_description"),
-                    sanitized_visual_description=log_meta.get("sanitized_visual_description"),
-                    trigger_words=log_meta.get("trigger_words"),
-                    suffix=log_meta.get("suffix"),
-                    final_prompt=prompt,
-                    lora_name=lora_name,
-                    lora_strength_model=lora_strength,
-                    lora_strength_clip=round(lora_strength * 0.75, 3),
-                    seed=seed,
-                    width=width,
-                    height=height,
-                    frame_count=length,
-                    duration_seconds=round((length - 1) / 25.0, 2),
-                    status="running",
-                    narration_text=log_meta.get("narration_text"),
-                    created_at=datetime.utcnow(),
-                )
-                db.add(row)
-                db.commit()
-                db.refresh(row)
-                log_id = row.id
+                # Check if a log already exists for this scene (retry case)
+                existing = db.query(PromptLog).filter(
+                    PromptLog.project_id == (log_meta.get("project_id", 0) or 0),
+                    PromptLog.job_id == log_meta.get("job_id"),
+                    PromptLog.scene_number == log_meta.get("scene_number", 1),
+                ).first()
+                if existing:
+                    existing.status = "running"
+                    existing.final_prompt = prompt
+                    existing.seed = seed
+                    existing.error = None
+                    existing.created_at = datetime.utcnow()
+                    db.commit()
+                    log_id = existing.id
+                else:
+                    row = PromptLog(
+                        project_id=log_meta.get("project_id", 0) or 0,
+                        job_id=log_meta.get("job_id"),
+                        scene_index=log_meta.get("scene_index", 0),
+                        scene_number=log_meta.get("scene_number", 1),
+                        raw_visual_description=log_meta.get("raw_visual_description"),
+                        sanitized_visual_description=log_meta.get("sanitized_visual_description"),
+                        trigger_words=log_meta.get("trigger_words"),
+                        suffix=log_meta.get("suffix"),
+                        final_prompt=prompt,
+                        lora_name=lora_name,
+                        lora_strength_model=lora_strength,
+                        lora_strength_clip=round(lora_strength * 0.75, 3),
+                        seed=seed,
+                        width=width,
+                        height=height,
+                        frame_count=length,
+                        duration_seconds=round((length - 1) / 25.0, 2),
+                        status="running",
+                        narration_text=log_meta.get("narration_text"),
+                        created_at=datetime.utcnow(),
+                    )
+                    db.add(row)
+                    db.commit()
+                    db.refresh(row)
+                    log_id = row.id
             except Exception as e:
                 print(f"[prompt_log] Failed to create log row: {e}", flush=True)
                 try:
@@ -757,8 +773,23 @@ class VisualsService:
                 break
 
             if mp4_bytes is None:
-                print(f"Failed to generate scene {i+1}, using fallback black clip")
+                print(f"Failed to generate scene {i+1}, using fallback black clip", flush=True)
                 mp4_bytes = self._make_fallback_clip(duration, width, height)
+                # Mark the prompt log as failed for this scene
+                if db is not None and log_meta is not None:
+                    try:
+                        from app.models import PromptLog
+                        log_row = db.query(PromptLog).filter(
+                            PromptLog.project_id == (log_meta.get("project_id", 0) or 0),
+                            PromptLog.job_id == log_meta.get("job_id"),
+                            PromptLog.scene_number == i + 1,
+                        ).order_by(PromptLog.id.desc()).first()
+                        if log_row:
+                            log_row.status = "failed"
+                            log_row.error = "Scene generation failed, used fallback clip"
+                            db.commit()
+                    except Exception:
+                        pass
 
             scene_path = project_dir / f"scene_{i+1:02d}.mp4"
             scene_path.write_bytes(mp4_bytes)
