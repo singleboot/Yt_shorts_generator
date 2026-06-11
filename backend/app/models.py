@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Integer, String, DateTime, JSON, Text, ForeignKey, Boolean, Float
 from sqlalchemy.orm import relationship
 from datetime import datetime
-from app.database import Base
+from app.database import Base, StoragePathType
 import json
 
 class YouTubeChannel(Base):
@@ -12,7 +12,7 @@ class YouTubeChannel(Base):
     channel_id = Column(String, nullable=False, index=True)  # YouTube's channel ID
     channel_title = Column(String, nullable=True)  # fetched from API
     thumbnail_url = Column(String, nullable=True)
-    credentials_file = Column(String, nullable=False)  # path to OAuth token file
+    credentials_file = Column(StoragePathType, nullable=False)  # path to OAuth token file
     created_at = Column(DateTime, default=datetime.utcnow)
 
     projects = relationship("Project", back_populates="youtube_channel")
@@ -49,6 +49,7 @@ class Project(Base):
                                             # circle_open | circle_close
         "transition_duration": 0.4,          # seconds, 0.0-1.5
         "audio_transition": "match_video",   # match_video | none
+        "research_provider": "duckduckgo",   # duckduckgo | wikipedia | tavily | google_serper
     })
 
     # Audio
@@ -64,11 +65,12 @@ class Project(Base):
     caption_settings = Column(JSON, default=lambda: {
         "style": "standard",
         "font": "Arial-Bold",
-        "font_size": 48,
+        "font_size": 96,
         "color": "#FFFFFF",
         "stroke_color": "#000000",
         "stroke_width": 3,
-        "animation": "word_by_word"
+        "animation": "word_by_word",
+        "position": "middle"
     })
 
     # Schedule
@@ -91,7 +93,7 @@ class Project(Base):
     youtube_channel_id = Column(Integer, ForeignKey("youtube_channels.id"), nullable=True)
 
     # Archive
-    archive_path = Column(String, nullable=True)
+    archive_path = Column(StoragePathType, nullable=True)
     archived_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -134,7 +136,7 @@ class Asset(Base):
     asset_type = Column(String, nullable=False)  # video, image, audio, music
     source = Column(String, nullable=True)  # pixabay, comfyui, generated
     source_url = Column(String, nullable=True)
-    local_path = Column(String, nullable=True)
+    local_path = Column(StoragePathType, nullable=True)
     meta = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -168,14 +170,14 @@ class Upload(Base):
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"))
     script_id = Column(Integer, ForeignKey("scripts.id"))
-    video_path = Column(String, nullable=True)
+    video_path = Column(StoragePathType, nullable=True)
     scheduled_for = Column(DateTime, nullable=True)
     youtube_video_id = Column(String, nullable=True)
     status = Column(String, default="queued")  # queued, processing, done, failed
     title = Column(String, nullable=True)
     description = Column(Text, nullable=True)
     tags = Column(String, nullable=True)
-    thumbnail_path = Column(String, nullable=True)
+    thumbnail_path = Column(StoragePathType, nullable=True)
     archived_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     uploaded_at = Column(DateTime, nullable=True)
@@ -204,6 +206,7 @@ class PromptLog(Base):
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"), index=True)
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
+    video_index = Column(Integer, nullable=True, index=True)  # 0-based video slot index
     scene_index = Column(Integer, default=0)  # 0-based
     scene_number = Column(Integer, default=1)  # 1-based (matches visual_description scene_number)
 
@@ -228,7 +231,7 @@ class PromptLog(Base):
     status = Column(String, default="queued")  # queued, running, completed, failed
     comfyui_prompt_id = Column(String, nullable=True, index=True)
     error = Column(Text, nullable=True)
-    output_path = Column(String, nullable=True)
+    output_path = Column(StoragePathType, nullable=True)
 
     # Narration for context in the console
     narration_text = Column(Text, nullable=True)

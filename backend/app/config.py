@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     OLLAMA_HOST: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "gemma4"
     PIXABAY_API_KEY: str = ""
+    TAVILY_API_KEY: str = ""
+    SERPER_API_KEY: str = ""
     
     # YouTube
     YOUTUBE_CLIENT_SECRETS_FILE: Path = STORAGE_DIR / "client_secrets.json"
@@ -85,10 +87,8 @@ class Settings(BaseSettings):
     # assembly normalizes the outro to the project's aspect ratio and concat-
     # appends it after the last AI scene with a hard cut. Set the path to None
     # to disable the outro (videos will be built from AI content only).
-    LIKE_SUBSCRIBE_OUTRO_PATH: Path = Path(
-        r"F:\MY APP\AI SHORTS CREATOR\AI SHORTS CREATOR V1\like-and-subscribe.mov"
-    )
-    OUTRO_DURATION_SECONDS: int = 6
+    LIKE_SUBSCRIBE_OUTRO_PATH: Path = BASE_DIR / ".." / "like-and-subscribe.mov"
+    OUTRO_DURATION_SECONDS: int = 3
     
     # Style to LoRA mapping (filename relative to loras/ltx2/)
     STYLE_LORAS: dict = {
@@ -108,6 +108,7 @@ class Settings(BaseSettings):
         "walgro_style": "ltx2/walgro.safetensors",
         "goldenboy": "ltx2/goldenboy.comfy.safetensors",
         "golden_age_comic": "ltx2/GoldenAgeComic.safetensors",
+        "anime90s": "ltx2/anime90s.safetensors",
         # Legacy aliases
         "studio_ghibli": "ltx2/ghibli.safetensors",
         "cinematic": "ltx2/Cinematic_sci-fi-cyberpunk.safetensors",
@@ -137,6 +138,7 @@ class Settings(BaseSettings):
         "walgro_style": "walgro style, painterly, vibrant colors, illustrated",
         "goldenboy": "goldenboy, golden age comic, bold ink, vintage comic",
         "golden_age_comic": "golden age comic, vintage comic, halftone, retro comic, 1940s comic",
+        "anime90s": "anime 90s, 90s anime style, vintage hand-drawn anime, retro anime, aesthetic cell animation",
         # Legacy aliases
         "studio_ghibli": "studio ghibli, hayao miyazaki, ghibli anime, watercolor, soft pastel",
         "cinematic": "cinematic sci-fi, cyberpunk, neon, futuristic, blade runner, dystopian",
@@ -145,6 +147,13 @@ class Settings(BaseSettings):
         "cyberpunk": "cinematic sci-fi, cyberpunk, neon, futuristic, blade runner, dystopian",
         "comic": "golden age comic, vintage comic, halftone, retro comic, 1940s comic",
     }
+    
+    # Telegram Bot
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_CHAT_ID: str = ""
+    TELEGRAM_DEFAULT_STYLE: str = ""
+    TELEGRAM_DEFAULT_CAPTION_PRESET: str = ""
+    TELEGRAM_DEFAULT_VOICE: str = ""
     
     class Config:
         env_file = ".env"

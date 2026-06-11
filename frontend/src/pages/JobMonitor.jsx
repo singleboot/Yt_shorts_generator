@@ -8,11 +8,26 @@ function JobMonitor() {
   const [jobs, setJobs] = useState([]);
   const [filter, setFilter] = useState('all');
 
+  const [pollInterval, setPollInterval] = useState(15000);
+
   useEffect(() => {
     loadJobs();
-    const interval = setInterval(loadJobs, 5000);
+  }, [filter]);
+
+  // Dynamically scale polling rate based on active job status
+  useEffect(() => {
+    const hasActiveJob = (jobs || []).some(j => j.status === 'running' || j.status === 'queued');
+    const targetInterval = hasActiveJob ? 5000 : 15000;
+    if (pollInterval !== targetInterval) {
+      setPollInterval(targetInterval);
+    }
+  }, [jobs, pollInterval]);
+
+  // Perform polling
+  useEffect(() => {
+    const interval = setInterval(loadJobs, pollInterval);
     return () => clearInterval(interval);
-  }, []);
+  }, [pollInterval, filter]);
 
   const loadJobs = async () => {
     try {

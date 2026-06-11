@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Sparkles, Send, CheckCircle, AlertCircle, Loader2, Youtube, ChevronDown, ChevronUp, Hash, Play, Globe, Clock, Archive, FileText, Video, ChevronLeft, ChevronRight, Palette, Mic, Music, Volume2, Square, Captions, Type, Plus, Brush, Trash2, Blend, Calendar } from 'lucide-react';
+import { ArrowLeft, Sparkles, Send, CheckCircle, AlertCircle, Loader2, Youtube, ChevronDown, ChevronUp, Hash, Play, Globe, Clock, Archive, FileText, Video, ChevronLeft, ChevronRight, Palette, Mic, Music, Volume2, Square, Captions, Type, Plus, Brush, Trash2, Blend, Calendar, Terminal, MessageSquare, X } from 'lucide-react';
 import api from '../api/client';
 import axios from 'axios';
 import VideoCard from './VideoCard';
 import EditVideoModal from './EditVideoModal';
 import ScheduleCalendar from '../components/ScheduleCalendar';
 import { CATEGORIES, SUBJECTS } from '../constants/categories';
-import { AI_STYLES, VOICES, MUSIC_GENRES, STYLE_LORA_PATHS } from '../constants/production';
+import { AI_STYLES, VOICES, MUSIC_GENRES, STYLE_LORA_PATHS, CAPTION_PRESETS } from '../constants/production';
+
 
 const DURATIONS = [
   { label: '30s',  value: 30,  scenes: 5,  perScene: 6,  longForm: false, estMin: 5  },
@@ -54,6 +55,8 @@ function ProjectDetail() {
   const [videoCount, setVideoCount] = useState(1);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
+  const [confirmState, setConfirmState] = useState(null);
+  const [customPresets, setCustomPresets] = useState([]);
   const [editingVideo, setEditingVideo] = useState(null);
   const [channels, setChannels] = useState([]);
   const [channelMenuOpen, setChannelMenuOpen] = useState(false);
@@ -80,6 +83,13 @@ function ProjectDetail() {
   const [captionStrokeColor, setCaptionStrokeColor] = useState('#000000');
   const [captionStrokeWidth, setCaptionStrokeWidth] = useState(3);
   const [captionAnimation, setCaptionAnimation] = useState('word_by_word');
+  const [captionAllCaps, setCaptionAllCaps] = useState(false);
+  const [captionPosition, setCaptionPosition] = useState('middle');
+  const [captionBoxed, setCaptionBoxed] = useState(false);
+  const [captionBoxColor, setCaptionBoxColor] = useState('#000000');
+  const [captionBoxOpacity, setCaptionBoxOpacity] = useState(0.8);
+  const [captionBoxShape, setCaptionBoxShape] = useState('rectangle');
+
   const [url, setUrl] = useState('');
   const [genCount, setGenCount] = useState(1);
   const [duration, setDuration] = useState(45);
@@ -94,6 +104,7 @@ function ProjectDetail() {
   const subjectRef = useRef(null);
   const audioRef = useRef(null);
   const [previewPlaying, setPreviewPlaying] = useState(null);
+  const [videoCacheBuster, setVideoCacheBuster] = useState(Date.now());
 
   const togglePreview = (type, id) => {
     const key = `${type}:${id}`;
@@ -102,7 +113,7 @@ function ProjectDetail() {
       setPreviewPlaying(null);
       return;
     }
-    const BASE = 'http://127.0.0.1:8002';
+    const BASE = '';
     const url = type === 'voice'
       ? `${BASE}/settings/preview-voice?voice_id=${id}`
       : `${BASE}/settings/preview-music/${id}`;
@@ -129,6 +140,7 @@ function ProjectDetail() {
   const [transitionStyle, setTransitionStyle] = useState('none');
   const [transitionDuration, setTransitionDuration] = useState(0.4);
   const [audioTransition, setAudioTransition] = useState('match_video');
+  const [researchProvider, setResearchProvider] = useState('duckduckgo');
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -161,14 +173,39 @@ function ProjectDetail() {
   // Persist draft on every relevant state change
   useEffect(() => { saveDraft(); }, [sourceType, category, topic, url, genCount, duration]);
 
-  // Load project on mount + 2s polling; restore localStorage draft once project loads
+  const [pollInterval, setPollInterval] = useState(10000);
+
+  // Load project & channels on mount or ID change
   useEffect(() => {
     loadProject();
     api.get('/settings/youtube/channels').then(res => setChannels(res.data || [])).catch(() => setChannels([]));
-    const interval = setInterval(loadProject, 2000);
-    return () => clearInterval(interval);
   }, [id]);
+
+  // Dynamically scale polling rate based on active job status
+  useEffect(() => {
+    const hasActiveJob = (videos || []).some(v => v.job && (v.job.status === 'running' || v.job.status === 'queued'));
+    const targetInterval = hasActiveJob ? 3000 : 10000;
+    if (pollInterval !== targetInterval) {
+      setPollInterval(targetInterval);
+    }
+  }, [videos, pollInterval]);
+
+  // Perform polling
+  useEffect(() => {
+    const interval = setInterval(loadProject, pollInterval);
+    return () => clearInterval(interval);
+  }, [pollInterval, id]);
+
   useEffect(() => { if (project) loadDraft(); }, [project]);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('custom_caption_presets');
+      setCustomPresets(saved ? JSON.parse(saved) : []);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [editingVideo]);
 
   // ── Debounced auto-save for production settings ─────────────────────────
   const autoSaveTimerRef = useRef(null);
@@ -188,10 +225,12 @@ function ProjectDetail() {
             transition_style: transitionStyle,
             transition_duration: transitionDuration,
             audio_transition: audioTransition,
+            research_provider: researchProvider,
           };
           const newASRaw = { ...(project?.audio_settings || {}), voice_id: selectedVoice, voice_custom: voiceCustom || undefined, music_genre: selectedMusic, music_custom: musicCustom || undefined };
           const newAS = Object.fromEntries(Object.entries(newASRaw).filter(([, v]) => v !== undefined));
-          const newCS = { style: captionStyle, font: captionFont, font_size: captionFontSize, color: captionColor, stroke_color: captionStrokeColor, stroke_width: captionStrokeWidth, animation: captionAnimation };
+          const newCS = { style: captionStyle, font: captionFont, font_size: captionFontSize, color: captionColor, stroke_color: captionStrokeColor, stroke_width: captionStrokeWidth, animation: captionAnimation, all_caps: captionAllCaps, position: captionPosition, boxed: captionBoxed, box_color: captionBoxColor, box_opacity: captionBoxOpacity, box_shape: captionBoxShape };
+
           await api.put(`/projects/${id}`, { visual_settings: newVS, audio_settings: newAS, caption_settings: newCS });
         } catch (e) {
           console.error('Auto-save failed', e);
@@ -205,7 +244,7 @@ function ProjectDetail() {
   useEffect(() => {
     if (!project) return;
     autoSaveProductionSettings();
-  }, [selectedStyle, loraStrength, selectedVoice, selectedMusic, voiceCustom, musicCustom, captionStyle, captionFont, captionFontSize, captionColor, captionStrokeColor, captionStrokeWidth, captionAnimation]);
+  }, [selectedStyle, loraStrength, selectedVoice, selectedMusic, voiceCustom, musicCustom, captionStyle, captionFont, captionFontSize, captionColor, captionStrokeColor, captionStrokeWidth, captionAnimation, captionPosition, captionAllCaps, captionBoxed, captionBoxColor, captionBoxOpacity, captionBoxShape, researchProvider]);
 
   const fetchSuggestions = async (cat) => {
     if (!cat) { setSuggestedTopics([]); return; }
@@ -277,6 +316,7 @@ function ProjectDetail() {
             setTransitionStyle(vs.transition_style || 'none');
             setTransitionDuration(vs.transition_duration ?? 0.4);
             setAudioTransition(vs.audio_transition || 'match_video');
+            setResearchProvider(vs.research_provider || 'duckduckgo');
             const cs = projRes.data.caption_settings || {};
             setCaptionStyle(cs.style || 'standard');
             setCaptionFont(cs.font || 'Arial-Bold');
@@ -285,6 +325,13 @@ function ProjectDetail() {
             setCaptionStrokeColor(cs.stroke_color || '#000000');
             setCaptionStrokeWidth(cs.stroke_width ?? 3);
             setCaptionAnimation(cs.animation || 'word_by_word');
+            setCaptionAllCaps(cs.all_caps ?? false);
+            setCaptionPosition(cs.position || 'middle');
+            setCaptionBoxed(cs.boxed ?? false);
+            setCaptionBoxColor(cs.box_color || '#000000');
+            setCaptionBoxOpacity(cs.box_opacity ?? 0.8);
+            setCaptionBoxShape(cs.box_shape || 'rectangle');
+
           }
       }
       if (vidRes && vidRes.data) {
@@ -413,8 +460,8 @@ function ProjectDetail() {
       showToast('Enter a subject', 'warning');
       return;
     }
-    if (sourceType === 'url' && !(url||'').trim()) {
-      showToast('Enter a URL', 'warning');
+    if ((sourceType === 'url' || sourceType === 'reddit') && !(url||'').trim()) {
+      showToast(sourceType === 'reddit' ? 'Enter a Subreddit or post URL' : 'Enter a URL', 'warning');
       return;
     }
     // Create placeholder cards immediately
@@ -432,13 +479,13 @@ function ProjectDetail() {
     const controller = new AbortController();
     cancelScriptRef.current = controller;
     try {
-      const payload = { video_count: genCount, duration, source_type: 'topic', category };
+      const payload = { video_count: genCount, duration, source_type: sourceType, category };
       if (sourceType === 'topic') {
         payload.category = category;
         payload.topic = (topic||'').trim();
       } else {
         payload.url = url.trim();
-        payload.category = category || 'tech';
+        payload.category = category || (sourceType === 'reddit' ? 'reddit_stories' : 'tech');
       }
       const res = await api.post(`/projects/${id}/generate-scripts`, payload, { signal: controller.signal });
       if (res.data.status === 'success') {
@@ -476,8 +523,8 @@ function ProjectDetail() {
       showToast('Enter a subject', 'warning');
       return;
     }
-    if (sourceType === 'url' && !(url||'').trim()) {
-      showToast('Enter a URL', 'warning');
+    if ((sourceType === 'url' || sourceType === 'reddit') && !(url||'').trim()) {
+      showToast(sourceType === 'reddit' ? 'Enter a Subreddit or post URL' : 'Enter a URL', 'warning');
       return;
     }
 
@@ -498,13 +545,13 @@ function ProjectDetail() {
     cancelScriptRef.current = controller;
 
     try {
-      const payload = { video_count: genCount, duration, source_type: 'topic', category };
+      const payload = { video_count: genCount, duration, source_type: sourceType, category };
       if (sourceType === 'topic') {
         payload.category = category;
         payload.topic = (topic||'').trim();
       } else {
         payload.url = url.trim();
-        payload.category = category || 'tech';
+        payload.category = category || (sourceType === 'reddit' ? 'reddit_stories' : 'tech');
       }
       const res = await api.post(`/projects/${id}/generate-scripts`, payload, { signal: controller.signal });
       if (res.data.status === 'success') {
@@ -622,50 +669,64 @@ function ProjectDetail() {
     }
   };
 
+  const requestConfirm = (message, onConfirm) => {
+    setConfirmState({ message, onConfirm });
+  };
+
   const handleRemovePlaceholder = (videoIndex) => {
-    if (!window.confirm(`Remove placeholder for slot #${videoIndex + 1}? The slot will be cancelled if still generating.`)) return;
-    setVideos(prev => prev.filter(v => !(v.generating && v.index === videoIndex)));
-    if (generatingScriptsRef.current && cancelScriptRef.current) {
-      cancelScriptRef.current.abort();
-    }
+    requestConfirm(
+      `Remove placeholder for slot #${videoIndex + 1}? The slot will be cancelled if still generating.`,
+      () => {
+        setVideos(prev => prev.filter(v => !(v.generating && v.index === videoIndex)));
+        if (generatingScriptsRef.current && cancelScriptRef.current) {
+          cancelScriptRef.current.abort();
+        }
+      }
+    );
   };
 
   const handleDeleteVideo = async (videoIndex) => {
-    if (!window.confirm(`Delete video #${videoIndex + 1}? This will remove the script, assets, and video file permanently.`)) return;
-    try {
-      const res = await api.delete(`/projects/${id}/videos/${videoIndex}`);
-      if (res.data.status === 'success') {
-        showToast(`Video #${videoIndex + 1} deleted`);
-        loadProject();
-      } else {
-        showToast(res.data.message || 'Delete failed', 'warning');
+    requestConfirm(
+      `Delete video #${videoIndex + 1}? This will remove the script, assets, and video file permanently.`,
+      async () => {
+        try {
+          const res = await api.delete(`/projects/${id}/videos/${videoIndex}`);
+          if (res.data.status === 'success') {
+            showToast(`Video #${videoIndex + 1} deleted`);
+            loadProject();
+          } else {
+            showToast(res.data.message || 'Delete failed', 'warning');
+          }
+        } catch (e) {
+          showToast('Failed to delete video', 'error');
+        }
       }
-    } catch (e) {
-      showToast('Failed to delete video', 'error');
-    }
+    );
   };
 
   const handleCleanScenes = async (videoIndex) => {
     const bytesApprox = 100;  // hint for the prompt
-    if (!window.confirm(
+    requestConfirm(
       `Clean intermediate scenes for video #${videoIndex + 1}?\n\n` +
       `This deletes the per-scene ComfyUI clips and voiceover chunks from disk ` +
       `to free up ~${bytesApprox}MB+ per video. The final video and script ` +
       `are kept. After cleanup, per-scene regeneration on this video will be ` +
-      `disabled until you re-render the full video.`
-    )) return;
-    try {
-      const res = await api.post(`/projects/${id}/videos/${videoIndex}/clean-scenes`);
-      if (res.data.status === 'success') {
-        const mb = (res.data.bytes_freed / 1024 / 1024).toFixed(1);
-        showToast(`Cleaned ${res.data.files_deleted} files, freed ${mb} MB`);
-        loadProject();
-      } else {
-        showToast(res.data.message || 'Clean failed', 'warning');
+      `disabled until you re-render the full video.`,
+      async () => {
+        try {
+          const res = await api.post(`/projects/${id}/videos/${videoIndex}/clean-scenes`);
+          if (res.data.status === 'success') {
+            const mb = (res.data.bytes_freed / 1024 / 1024).toFixed(1);
+            showToast(`Cleaned ${res.data.files_deleted} files, freed ${mb} MB`);
+            loadProject();
+          } else {
+            showToast(res.data.message || 'Clean failed', 'warning');
+          }
+        } catch (e) {
+          showToast('Failed to clean scenes', 'error');
+        }
       }
-    } catch (e) {
-      showToast('Failed to clean scenes', 'error');
-    }
+    );
   };
 
   const handleCancelVideos = async () => {
@@ -688,6 +749,7 @@ function ProjectDetail() {
         transition_style: transitionStyle,
         transition_duration: transitionDuration,
         audio_transition: audioTransition,
+        research_provider: researchProvider,
       };
       const newASRaw = { ...(project.audio_settings || {}), voice_id: selectedVoice, voice_custom: voiceCustom || undefined, music_genre: selectedMusic, music_custom: musicCustom || undefined };
       const newAS = Object.fromEntries(Object.entries(newASRaw).filter(([, v]) => v !== undefined));
@@ -709,10 +771,12 @@ function ProjectDetail() {
         transition_style: transitionStyle,
         transition_duration: transitionDuration,
         audio_transition: audioTransition,
+        research_provider: researchProvider,
       };
       const newASRaw = { ...(project.audio_settings || {}), voice_id: selectedVoice, voice_custom: voiceCustom || undefined, music_genre: selectedMusic, music_custom: musicCustom || undefined };
       const newAS = Object.fromEntries(Object.entries(newASRaw).filter(([, v]) => v !== undefined));
-      const newCS = { style: captionStyle, font: captionFont, font_size: captionFontSize, color: captionColor, stroke_color: captionStrokeColor, stroke_width: captionStrokeWidth, animation: captionAnimation };
+      const newCS = { style: captionStyle, font: captionFont, font_size: captionFontSize, color: captionColor, stroke_color: captionStrokeColor, stroke_width: captionStrokeWidth, animation: captionAnimation, all_caps: captionAllCaps, position: captionPosition, boxed: captionBoxed, box_color: captionBoxColor, box_opacity: captionBoxOpacity, box_shape: captionBoxShape };
+
       const newSS = { ...(project.schedule_settings || {}), video_count: genCount };
       await api.post(`/projects/${id}/save`, {
         source_type: sourceType,
@@ -829,15 +893,80 @@ function ProjectDetail() {
       <div className="min-h-screen p-8 relative" style={{background:'#050608'}}>
       <audio ref={audioRef} onEnded={() => setPreviewPlaying(null)} className="hidden" />
       {toast && (
-        <div className={`fixed top-6 right-6 z-50 flex items-center gap-3 px-5 py-3 rounded-2xl shadow-2xl transition-all duration-150 ${
-          toast.type === 'error' ? 'bg-[#FF5757] text-white' :
-          toast.type === 'warning' ? 'bg-[#FFC845] text-[#050608]' :
-          'bg-[#C6F11D] text-[#050608]'
-        }`}>
-          {toast.type === 'error' ? <AlertCircle className="h-5 w-5" /> :
-           toast.type === 'warning' ? <AlertCircle className="h-5 w-5" /> :
-           <CheckCircle className="h-5 w-5" />}
-          <span className="text-sm font-bold">{toast.msg}</span>
+        <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none animate-in fade-in duration-200">
+          <div className={`pointer-events-auto flex items-center gap-4 px-6 py-4 rounded-xl border backdrop-blur-md shadow-2xl min-w-[320px] max-w-[480px] animate-in zoom-in-95 duration-200 bg-[#0E1116]/95 ${
+            toast.type === 'error' ? 'border-[#FF5757]/30 shadow-[0_0_30px_rgba(255,87,87,0.15)]' :
+            toast.type === 'warning' ? 'border-[#FFC845]/30 shadow-[0_0_30px_rgba(255,200,69,0.15)]' :
+            'border-[#C6F11D]/30 shadow-[0_0_30px_rgba(198,241,29,0.15)]'
+          }`}>
+            <div className={`p-2 rounded-lg ${
+              toast.type === 'error' ? 'bg-[rgba(255,87,87,0.1)] text-[#FF5757]' :
+              toast.type === 'warning' ? 'bg-[rgba(255,200,69,0.1)] text-[#FFC845]' :
+              'bg-[rgba(198,241,29,0.1)] text-[#C6F11D]'
+            }`}>
+              {toast.type === 'error' ? <AlertCircle className="h-6 w-6" /> :
+               toast.type === 'warning' ? <AlertCircle className="h-6 w-6" /> :
+               <CheckCircle className="h-6 w-6" />}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] uppercase tracking-wider font-semibold opacity-60 mb-0.5" style={{color: toast.type === 'error' ? '#FF5757' : toast.type === 'warning' ? '#FFC845' : '#C6F11D'}}>
+                {toast.type === 'error' ? 'Error' : toast.type === 'warning' ? 'Warning' : 'Success'}
+              </p>
+              <p className="text-[#F5F5F5] text-sm font-medium leading-relaxed">{toast.msg}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmState && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setConfirmState(null)}>
+          <div className="neo-card p-6 max-w-md w-full mx-4 animate-in zoom-in-95 duration-200 flex flex-col gap-4 bg-[#0E1116] border border-[#252A33]" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start gap-4">
+              <div className={`p-3 rounded-xl shrink-0 ${
+                confirmState.message.toLowerCase().includes('delete') || confirmState.message.toLowerCase().includes('remove') || confirmState.message.toLowerCase().includes('cancel')
+                  ? 'bg-[rgba(255,87,87,0.08)] border border-[rgba(255,87,87,0.2)] text-[#FF5757]'
+                  : 'bg-[rgba(198,241,29,0.08)] border border-[rgba(198,241,29,0.2)] text-[#C6F11D]'
+              }`}>
+                {confirmState.message.toLowerCase().includes('delete') ? (
+                  <Trash2 className="h-6 w-6" />
+                ) : (
+                  <AlertCircle className="h-6 w-6" />
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="neo-title text-lg mb-1">
+                  {confirmState.message.toLowerCase().includes('delete') ? 'Confirm Delete' :
+                   confirmState.message.toLowerCase().includes('remove') ? 'Confirm Removal' :
+                   confirmState.message.toLowerCase().includes('cancel') ? 'Confirm Action' :
+                   'Confirm'}
+                </h3>
+                <p className="text-[#9AA0A6] text-sm leading-relaxed whitespace-pre-wrap">{confirmState.message}</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center justify-end gap-3 mt-2">
+              <button
+                onClick={() => setConfirmState(null)}
+                className="px-5 py-2.5 rounded-xl font-bold text-sm text-[#9AA0A6] hover:text-[#F5F5F5] bg-[#252A33] hover:bg-[#2F3540] transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const onConfirm = confirmState.onConfirm;
+                  setConfirmState(null);
+                  onConfirm();
+                }}
+                className={`px-5 py-2.5 rounded-xl font-bold text-sm transition-all ${
+                  confirmState.message.toLowerCase().includes('delete') || confirmState.message.toLowerCase().includes('remove') || confirmState.message.toLowerCase().includes('cancel')
+                    ? 'bg-[#FF5757] hover:bg-[#FF7777] text-white shadow-[0_0_15px_rgba(255,87,87,0.2)]'
+                    : 'bg-[#C6F11D] hover:bg-[#D9FF3D] text-[#050608]'
+                }`}
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -879,6 +1008,20 @@ function ProjectDetail() {
               {phase === 'videos' ? <Video className="h-3 w-3" /> : phase === 'scripts' ? <FileText className="h-3 w-3" /> : null}
               {phase === 'setup' ? 'Setup' : phase === 'scripts' ? 'Scripts' : 'Videos'}
             </span>
+            <button
+              onClick={() => navigate(`/research?projectId=${id}`)}
+              className="neo-card-hover flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm text-[#9AA0A6] hover:text-[#F5F5F5] mr-1"
+            >
+              <Globe className="h-4 w-4" />
+              Research
+            </button>
+            <button
+              onClick={() => navigate(`/prompts?projectId=${id}`)}
+              className="neo-card-hover flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm text-[#9AA0A6] hover:text-[#F5F5F5] mr-1"
+            >
+              <Terminal className="h-4 w-4" />
+              Prompts
+            </button>
             <button
               onClick={() => setShowCalendar(true)}
               className="neo-card-hover flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm text-[#9AA0A6] hover:text-[#F5F5F5] mr-1"
@@ -1022,6 +1165,15 @@ function ProjectDetail() {
                     <Globe className="h-3.5 w-3.5" />
                     URL
                   </button>
+                  <button
+                    onClick={() => { setSourceType('reddit'); setTrending(false); }}
+                    className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150 ${
+                      sourceType === 'reddit' ? 'bg-[#C6F11D] text-[#050608]' : 'text-[#9AA0A6] hover:text-[#F5F5F5]'
+                    }`}
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    Reddit
+                  </button>
                 </div>
               </div>
 
@@ -1162,6 +1314,22 @@ function ProjectDetail() {
                 </div>
               )}
 
+              {sourceType === 'reddit' && (
+                <div>
+                  <label className="block text-xs font-semibold text-[#9AA0A6] uppercase tracking-wider mb-2">Reddit Source</label>
+                  <input
+                    type="text"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    placeholder="e.g. AmItheAsshole or https://www.reddit.com/r/AmItheAsshole/comments/..."
+                    className="w-full px-4 py-2.5 rounded-xl bg-[#0E1116]"
+                  />
+                  <p className="text-[11px] text-[#5F6772] mt-1">
+                    Enter a subreddit name (e.g. <strong>AmItheAsshole</strong>) to fetch hot stories automatically, or paste a direct <strong>Reddit Post URL</strong>.
+                  </p>
+                </div>
+              )}
+
               {/* Video count + Duration row */}
               <div className="flex items-end gap-4">
                 <div>
@@ -1218,8 +1386,8 @@ function ProjectDetail() {
                 </div>
               </div>
 
-              {/* Aspect ratio + Transitions row */}
-              <div className="border-t border-[#252A33] pt-4 grid grid-cols-2 gap-4">
+              {/* Aspect ratio + Transitions + Research row */}
+              <div className="border-t border-[#252A33] pt-4 grid grid-cols-3 gap-4">
                 <div>
                   <label className="flex items-center gap-1.5 text-xs font-semibold text-[#9AA0A6] uppercase tracking-wider mb-2">
                     <Square className="h-3.5 w-3.5" />
@@ -1303,6 +1471,29 @@ function ProjectDetail() {
                     </p>
                   )}
                 </div>
+
+                <div>
+                  <label className="flex items-center gap-1.5 text-xs font-semibold text-[#9AA0A6] uppercase tracking-wider mb-2">
+                    <Globe className="h-3.5 w-3.5" />
+                    Research Source
+                  </label>
+                  <select
+                    value={researchProvider}
+                    onChange={(e) => setResearchProvider(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-[#0E1116] border border-[#252A33] text-xs text-[#F5F5F5] outline-none focus:border-[#C6F11D]/50"
+                  >
+                    <option value="duckduckgo">DuckDuckGo (Free web search)</option>
+                    <option value="wikipedia">Wikipedia (Free encyclopedic search)</option>
+                    <option value="tavily">Tavily AI (Paid agentic search)</option>
+                    <option value="google_serper">Google Search (Paid Serper search)</option>
+                  </select>
+                  <p className="text-[10px] text-[#5F6772] mt-1.5">
+                    {researchProvider === 'duckduckgo' && "Default search. Fast, clean, and requires no API keys."}
+                    {researchProvider === 'wikipedia' && "Encyclopedic queries. Highly factual and detailed."}
+                    {researchProvider === 'tavily' && "Paid AI search. Synthesized facts, requires Tavily API key."}
+                    {researchProvider === 'google_serper' && "Paid Google search. Direct organic results, requires Serper API key."}
+                  </p>
+                </div>
               </div>
 
               {/* Production tabs: Style / Voice / Music */}
@@ -1344,15 +1535,7 @@ function ProjectDetail() {
                     <Captions className="h-3.5 w-3.5" />
                     Captions {captionStyle !== 'standard' ? `(${captionStyle})` : ''}
                   </button>
-                  <button
-                    onClick={() => setProductionTab(productionTab === 'calendar' ? null : 'calendar')}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all duration-150 ${
-                      productionTab === 'calendar' ? 'bg-[#C6F11D] text-[#050608]' : 'bg-[#0E1116] text-[#9AA0A6] border border-[#252A33] hover:border-[#C6F11D]'
-                    }`}
-                  >
-                    <Calendar className="h-3.5 w-3.5" />
-                    Schedule
-                  </button>
+
                 </div>
 
                 {productionTab === 'style' && (
@@ -1494,7 +1677,126 @@ function ProjectDetail() {
                 )}
 
                 {productionTab === 'caption' && (
-                  <div className="mb-4 space-y-3">
+                  <div className="mb-4 space-y-4">
+                    <div className="p-3 bg-[#131722]/50 border border-[#252A33]/50 rounded-xl">
+                      <label className="text-[10px] text-[#9AA0A6] block mb-2 font-semibold uppercase tracking-wider">Caption Presets</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          ...CAPTION_PRESETS,
+                          ...customPresets.map(cp => {
+                            const presetStyle = {
+                              fontFamily: cp.font === 'Arial-Bold' ? 'Arial, sans-serif' : 'Impact, sans-serif',
+                              color: cp.color,
+                              fontSize: '11px',
+                              fontWeight: cp.font === 'Arial-Bold' ? 'bold' : 'normal',
+                              textShadow: cp.strokeWidth > 0 
+                                ? `-${cp.strokeWidth}px -${cp.strokeWidth}px 0 ${cp.strokeColor}, ${cp.strokeWidth}px -${cp.strokeWidth}px 0 ${cp.strokeColor}, -${cp.strokeWidth}px ${cp.strokeWidth}px 0 ${cp.strokeColor}, ${cp.strokeWidth}px ${cp.strokeWidth}px 0 ${cp.strokeColor}`
+                                : 'none',
+                            };
+                            const bgStyle = cp.boxed ? { background: `${cp.boxColor || '#000000'}` } : {};
+                            return {
+                              id: cp.id,
+                              name: cp.name,
+                              style: cp.style,
+                              font: cp.font,
+                              color: cp.color,
+                              strokeColor: cp.strokeColor,
+                              strokeWidth: cp.strokeWidth,
+                              size: cp.size,
+                              animation: cp.animation,
+                              allCaps: cp.allCaps,
+                              boxed: cp.boxed,
+                              boxColor: cp.boxColor,
+                              boxOpacity: cp.boxOpacity,
+                              boxShape: cp.boxShape,
+                              isCustom: true,
+                              textStyle: presetStyle,
+                              bgStyle: bgStyle,
+                              bgPreview: cp.boxed ? '' : 'bg-[#0E1116]',
+                              textLabel: cp.allCaps ? 'TEXT' : 'Text',
+                            };
+                          })
+                        ].map(preset => {
+                          const isSelected = captionStyle === preset.style &&
+                                             captionFont === preset.font &&
+                                             captionColor === preset.color &&
+                                             captionStrokeColor === preset.strokeColor &&
+                                             captionStrokeWidth === preset.strokeWidth &&
+                                             captionFontSize === preset.size &&
+                                             captionAnimation === preset.animation &&
+                                             captionAllCaps === (preset.allCaps ?? false) &&
+                                             captionBoxed === (preset.boxed ?? (preset.style === 'boxed'));
+                          return (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              onClick={() => {
+                                setCaptionStyle(preset.style);
+                                setCaptionFont(preset.font);
+                                setCaptionColor(preset.color);
+                                setCaptionStrokeColor(preset.strokeColor);
+                                setCaptionStrokeWidth(preset.strokeWidth);
+                                setCaptionFontSize(preset.size);
+                                setCaptionAnimation(preset.animation);
+                                setCaptionAllCaps(preset.allCaps ?? false);
+                                setCaptionBoxed(preset.boxed ?? (preset.style === 'boxed'));
+                                if (preset.isCustom) {
+                                  setCaptionBoxColor(preset.boxColor || '#000000');
+                                  setCaptionBoxOpacity(preset.boxOpacity ?? 0.8);
+                                  setCaptionBoxShape(preset.boxShape || 'rectangle');
+                                } else {
+                                  if (preset.id === 'black_box') {
+                                    setCaptionBoxColor('#000000');
+                                    setCaptionBoxOpacity(0.9);
+                                    setCaptionBoxShape('rectangle');
+                                  } else if (preset.id === 'white_box') {
+                                    setCaptionBoxColor('#FFFFFF');
+                                    setCaptionBoxOpacity(0.95);
+                                    setCaptionBoxShape('rectangle');
+                                  } else if (preset.id === 'highlight_yellow') {
+                                    setCaptionBoxColor('#FFE600');
+                                    setCaptionBoxOpacity(0.95);
+                                    setCaptionBoxShape('rectangle');
+                                  } else {
+                                    setCaptionBoxColor('#000000');
+                                    setCaptionBoxOpacity(0.8);
+                                    setCaptionBoxShape('rectangle');
+                                  }
+                                }
+                              }}
+                              className={`group relative flex flex-col items-center p-2 rounded-xl border text-center transition-all duration-200 ${
+                                isSelected
+                                  ? 'bg-[#1C2026] border-[#C6F11D] shadow-[0_0_12px_rgba(198,241,29,0.15)] text-[#C6F11D]'
+                                  : 'bg-[#0E1116] border-[#252A33] text-[#9AA0A6] hover:border-[#C6F11D]/60 hover:bg-[#12161E]'
+                              }`}
+                            >
+                              {preset.isCustom && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    requestConfirm("Delete this custom preset?", () => {
+                                      const updated = customPresets.filter(p => p.id !== preset.id);
+                                      setCustomPresets(updated);
+                                      localStorage.setItem('custom_caption_presets', JSON.stringify(updated));
+                                    });
+                                  }}
+                                  className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-[#FF5757] hover:bg-[#FF7777] text-white flex items-center justify-center transition-all z-10 opacity-0 group-hover:opacity-100 shadow-lg border border-[#0E1116]"
+                                  title="Delete Preset"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              )}
+                              <div className={`w-full h-11 rounded-lg flex items-center justify-center mb-1 border border-[#252A33]/55 ${preset.bgPreview}`} style={preset.bgStyle}>
+                                <span style={preset.textStyle}>{preset.textLabel}</span>
+                              </div>
+                              <span className="text-[9px] font-medium truncate w-full">{preset.name}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-[10px] text-[#9AA0A6] block mb-1">Style</label>
@@ -1505,6 +1807,7 @@ function ProjectDetail() {
                             { id: 'minimal', name: 'Minimal' },
                             { id: 'boxed', name: 'Boxed' },
                             { id: 'karaoke', name: 'Karaoke' },
+                            { id: 'none', name: 'None' },
                           ].map(s => (
                             <button
                               key={s.id}
@@ -1559,9 +1862,26 @@ function ProjectDetail() {
                         </select>
                       </div>
                       <div>
-                        <label className="text-[10px] text-[#9AA0A6] block mb-1">Size: {captionFontSize}px</label>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[10px] text-[#9AA0A6] block">Font Size (px)</label>
+                          <input
+                            type="number"
+                            min="10"
+                            max="300"
+                            value={captionFontSize}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value);
+                              setCaptionFontSize(isNaN(val) ? 0 : val);
+                            }}
+                            onBlur={(e) => {
+                              const val = Math.max(10, Math.min(300, parseInt(e.target.value) || 96));
+                              setCaptionFontSize(val);
+                            }}
+                            className="w-16 px-1.5 py-0.5 text-center bg-[#0E1116] border border-[#252A33] rounded text-xs text-[#F5F5F5] outline-none"
+                          />
+                        </div>
                         <input
-                          type="range" min="24" max="96" step="2"
+                          type="range" min="10" max="300" step="1"
                           value={captionFontSize}
                           onChange={(e) => setCaptionFontSize(parseInt(e.target.value))}
                           className="w-full accent-[#C6F11D]"
@@ -1604,15 +1924,115 @@ function ProjectDetail() {
                         </div>
                       </div>
                     </div>
-                    <div>
-                      <label className="text-[10px] text-[#9AA0A6] block mb-1">Stroke Width: {captionStrokeWidth}px</label>
-                      <input
-                        type="range" min="0" max="8" step="1"
-                        value={captionStrokeWidth}
-                        onChange={(e) => setCaptionStrokeWidth(parseInt(e.target.value))}
-                        className="w-full accent-[#C6F11D]"
-                      />
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] text-[#9AA0A6] block mb-1">Stroke Width: {captionStrokeWidth}px</label>
+                        <input
+                          type="range" min="0" max="8" step="1"
+                          value={captionStrokeWidth}
+                          onChange={(e) => setCaptionStrokeWidth(parseInt(e.target.value))}
+                          className="w-full accent-[#C6F11D]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-[#9AA0A6] block mb-1">Position Alignment</label>
+                        <select
+                          value={captionPosition}
+                          onChange={e => setCaptionPosition(e.target.value)}
+                          className="w-full px-2.5 py-1.5 rounded-lg bg-[#0E1116] border border-[#252A33] text-xs text-[#F5F5F5] outline-none focus:border-[#C6F11D]/50"
+                        >
+                          <option value="top" className="bg-[#0E1116] text-[#F5F5F5]">Top</option>
+                          <option value="middle" className="bg-[#0E1116] text-[#F5F5F5]">Middle (Default)</option>
+                          <option value="bottom" className="bg-[#0E1116] text-[#F5F5F5]">Bottom</option>
+                        </select>
+                      </div>
                     </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setCaptionAllCaps(v => !v)}
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border transition-all duration-200 ${
+                          captionAllCaps
+                            ? 'border-[#C6F11D] bg-[rgba(198,241,29,0.07)]'
+                            : 'border-[#252A33] bg-transparent hover:border-[#9AA0A6]/30'
+                        }`}
+                      >
+                        <div className="flex flex-col items-start gap-0.5">
+                          <span className={`text-[10px] font-bold tracking-widest ${captionAllCaps ? 'text-[#C6F11D]' : 'text-[#9AA0A6]'}`}>
+                            {captionAllCaps ? 'ALL CAPS — ON' : 'All Caps — off'}
+                          </span>
+                          <span className="text-[8px] text-[#5F6772]">Force uppercase</span>
+                        </div>
+                        <div className={`relative w-8 h-4 rounded-full transition-colors duration-200 flex-shrink-0 ${captionAllCaps ? 'bg-[#C6F11D]' : 'bg-[#252A33]'}`}>
+                          <span className={`absolute top-0.5 h-3 w-3 rounded-full transition-transform duration-200 shadow ${captionAllCaps ? 'translate-x-4 bg-[#050608]' : 'translate-x-0.5 bg-[#9AA0A6]'}`} />
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setCaptionBoxed(v => !v)}
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border transition-all duration-200 ${
+                          captionBoxed
+                            ? 'border-[#C6F11D] bg-[rgba(198,241,29,0.07)]'
+                            : 'border-[#252A33] bg-transparent hover:border-[#9AA0A6]/30'
+                        }`}
+                      >
+                        <div className="flex flex-col items-start gap-0.5">
+                          <span className={`text-[10px] font-bold tracking-widest ${captionBoxed ? 'text-[#C6F11D]' : 'text-[#9AA0A6]'}`}>
+                            {captionBoxed ? 'BOXED — ON' : 'Boxed — off'}
+                          </span>
+                          <span className="text-[8px] text-[#5F6772]">Background box</span>
+                        </div>
+                        <div className={`relative w-8 h-4 rounded-full transition-colors duration-200 flex-shrink-0 ${captionBoxed ? 'bg-[#C6F11D]' : 'bg-[#252A33]'}`}>
+                          <span className={`absolute top-0.5 h-3 w-3 rounded-full transition-transform duration-200 shadow ${captionBoxed ? 'translate-x-4 bg-[#050608]' : 'translate-x-0.5 bg-[#9AA0A6]'}`} />
+                        </div>
+                      </button>
+                    </div>
+
+                    {captionBoxed && (
+                      <div className="p-3 bg-[#08090C]/50 border border-[#252A33]/50 rounded-xl space-y-3 mt-3 animate-fadeIn">
+                        <label className="text-[9px] text-[#C6F11D] block font-bold uppercase tracking-wider">Box Customization</label>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-[10px] text-[#9AA0A6] block mb-1">Box Color</label>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="color"
+                                value={captionBoxColor}
+                                onChange={(e) => setCaptionBoxColor(e.target.value)}
+                                className="w-9 h-8 rounded bg-[#0E1116] border border-[#252A33] cursor-pointer"
+                              />
+                              <input
+                                type="text"
+                                value={captionBoxColor}
+                                onChange={(e) => setCaptionBoxColor(e.target.value)}
+                                className="flex-1 px-2 py-1 rounded bg-[#0E1116] border border-[#252A33] text-[11px] text-[#F5F5F5] outline-none focus:border-[#C6F11D]/50 font-mono"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-[#9AA0A6] block mb-1">Box Shape / Style</label>
+                            <select
+                              value={captionBoxShape}
+                              onChange={e => setCaptionBoxShape(e.target.value)}
+                              className="w-full px-2 py-1.5 rounded bg-[#0E1116] border border-[#252A33] text-xs text-[#F5F5F5] outline-none focus:border-[#C6F11D]/50"
+                            >
+                              <option value="rectangle" className="bg-[#0E1116] text-[#F5F5F5]">Standard Box (Rectangle)</option>
+                              <option value="underline" className="bg-[#0E1116] text-[#F5F5F5]">Underline Highlight</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-[#9AA0A6] block mb-1">Box Opacity: {Math.round(captionBoxOpacity * 100)}%</label>
+                          <input
+                            type="range" min="0.1" max="1.0" step="0.05"
+                            value={captionBoxOpacity}
+                            onChange={(e) => setCaptionBoxOpacity(parseFloat(e.target.value))}
+                            className="w-full accent-[#C6F11D]"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1673,16 +2093,18 @@ function ProjectDetail() {
                 key={video.index}
                 video={video}
                 project={project}
+                videoCacheBuster={videoCacheBuster}
                 getStepLabel={getStepLabel}
                 onPost={() => handlePost(video.index)}
                 onUpload={() => handleUpload(video.index)}
                 onDelete={() => handleDeleteVideo(video.index)}
                 onEdit={() => setEditingVideo(video)}
-                mode={phase === 'scripts' ? 'script' : 'video'}
-                onRegenScript={phase === 'scripts' ? handleRegenScript : null}
+                mode={(video.job?.status === 'completed' || video.job?.status === 'running' || video.job?.status === 'queued' || video.upload?.video_url) ? 'video' : 'script'}
+                onRegenScript={handleRegenScript}
                 onGenerateVideo={!video.job || video.job.status === 'cancelled' || video.job.status === 'failed' ? handleGenerateSingleVideo : null}
                 onRemovePlaceholder={generatingScripts ? handleRemovePlaceholder : null}
                 onCleanScenes={phase === 'videos' ? () => handleCleanScenes(video.index) : null}
+                requestConfirm={requestConfirm}
               />
             ))}
           </div>
@@ -1746,11 +2168,13 @@ function ProjectDetail() {
               const payload = res.data || {};
               if (Array.isArray(payload.videos)) {
                 setVideos(payload.videos);
+                setVideoCacheBuster(Date.now());
                 if (typeof payload.video_count === 'number') {
                   setVideoCount(payload.video_count);
                 }
               } else if (Array.isArray(payload)) {
                 setVideos(payload);
+                setVideoCacheBuster(Date.now());
               }
             } catch (e) {
               console.error('Failed to refresh videos after scene regen:', e);
@@ -1763,11 +2187,13 @@ function ProjectDetail() {
               const payload = res.data || {};
               if (Array.isArray(payload.videos)) {
                 setVideos(payload.videos);
+                setVideoCacheBuster(Date.now());
                 if (typeof payload.video_count === 'number') {
                   setVideoCount(payload.video_count);
                 }
               } else if (Array.isArray(payload)) {
                 setVideos(payload);
+                setVideoCacheBuster(Date.now());
               }
             } catch (e) {
               console.error('Failed to refresh videos after reassemble:', e);

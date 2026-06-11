@@ -27,11 +27,26 @@ function Dashboard() {
   const [toast, setToast] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(null);
 
+  const [pollInterval, setPollInterval] = useState(15000);
+
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 3000);
-    return () => clearInterval(interval);
   }, []);
+
+  // Dynamically scale polling rate based on active job status
+  useEffect(() => {
+    const hasActiveJob = (jobs || []).some(j => j.status === 'running' || j.status === 'queued');
+    const targetInterval = hasActiveJob ? 5000 : 15000;
+    if (pollInterval !== targetInterval) {
+      setPollInterval(targetInterval);
+    }
+  }, [jobs, pollInterval]);
+
+  // Perform polling
+  useEffect(() => {
+    const interval = setInterval(loadData, pollInterval);
+    return () => clearInterval(interval);
+  }, [pollInterval]);
 
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
@@ -97,15 +112,28 @@ function Dashboard() {
   return (
     <div className="p-8 min-h-screen relative" style={{background:'#050608'}}>
       {toast && (
-        <div className={`fixed top-6 right-6 z-50 flex items-center gap-3 px-5 py-3 rounded-2xl shadow-2xl transition-all duration-150 ${
-          toast.type === 'error' ? 'bg-[#FF5757] text-white' :
-          toast.type === 'warning' ? 'bg-[#FFC845] text-[#050608]' :
-          'bg-[#C6F11D] text-[#050608]'
-        }`}>
-          {toast.type === 'error' ? <AlertCircle className="h-5 w-5" /> :
-           toast.type === 'warning' ? <AlertCircle className="h-5 w-5" /> :
-           <CheckCircle className="h-5 w-5" />}
-          <span className="text-sm font-bold">{toast.message}</span>
+        <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none animate-in fade-in duration-200">
+          <div className={`pointer-events-auto flex items-center gap-4 px-6 py-4 rounded-xl border backdrop-blur-md shadow-2xl min-w-[320px] max-w-[480px] animate-in zoom-in-95 duration-200 bg-[#0E1116]/95 ${
+            toast.type === 'error' ? 'border-[#FF5757]/30 shadow-[0_0_30px_rgba(255,87,87,0.15)]' :
+            toast.type === 'warning' ? 'border-[#FFC845]/30 shadow-[0_0_30px_rgba(255,200,69,0.15)]' :
+            'border-[#C6F11D]/30 shadow-[0_0_30px_rgba(198,241,29,0.15)]'
+          }`}>
+            <div className={`p-2 rounded-lg ${
+              toast.type === 'error' ? 'bg-[rgba(255,87,87,0.1)] text-[#FF5757]' :
+              toast.type === 'warning' ? 'bg-[rgba(255,200,69,0.1)] text-[#FFC845]' :
+              'bg-[rgba(198,241,29,0.1)] text-[#C6F11D]'
+            }`}>
+              {toast.type === 'error' ? <AlertCircle className="h-6 w-6" /> :
+               toast.type === 'warning' ? <AlertCircle className="h-6 w-6" /> :
+               <CheckCircle className="h-6 w-6" />}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] uppercase tracking-wider font-semibold opacity-60 mb-0.5" style={{color: toast.type === 'error' ? '#FF5757' : toast.type === 'warning' ? '#FFC845' : '#C6F11D'}}>
+                {toast.type === 'error' ? 'Error' : toast.type === 'warning' ? 'Warning' : 'Success'}
+              </p>
+              <p className="text-[#F5F5F5] text-sm font-medium leading-relaxed">{toast.message}</p>
+            </div>
+          </div>
         </div>
       )}
 

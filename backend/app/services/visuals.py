@@ -74,10 +74,13 @@ class ComfyUIClient:
             print(f"Get image error: {e}")
             return None
     
-    async def wait_for_completion(self, prompt_id: str, timeout: int = 300) -> Optional[dict]:
-        """Poll history until prompt completes or timeout."""
+    async def wait_for_completion(self, prompt_id: str, timeout: int = 300, check_cancel: callable = None) -> Optional[dict]:
+        """Poll history until prompt completes or timeout, or job is cancelled."""
         start_time = time.time()
         while time.time() - start_time < timeout:
+            if check_cancel and check_cancel():
+                print(f"ComfyUI prompt execution {prompt_id} aborted via cancellation check.")
+                return None
             history = await self.get_history(prompt_id)
             if history and prompt_id in history:
                 prompt_data = history[prompt_id]
@@ -322,7 +325,8 @@ class VisualsService:
                                      width: int = 720, height: int = 1280,
                                      video_length: int = 65,
                                      log_meta: Optional[Dict] = None,
-                                     db: Optional[object] = None) -> Optional[bytes]:
+                                     db: Optional[object] = None,
+                                     check_cancel: Optional[callable] = None) -> Optional[bytes]:
         """Generate video from text using LTX 2.3 (pure t2v, 2-stage sampling, no input image).
 
         Workflow: video_t2v_ltx.json (MickMumpitz-style 2-stage: 360x640 -> 720x1280)
@@ -415,6 +419,7 @@ class VisualsService:
                     row = PromptLog(
                         project_id=log_meta.get("project_id", 0) or 0,
                         job_id=log_meta.get("job_id"),
+                        video_index=log_meta.get("video_index"),
                         scene_index=log_meta.get("scene_index", 0),
                         scene_number=log_meta.get("scene_number", 1),
                         raw_visual_description=log_meta.get("raw_visual_description"),
@@ -504,7 +509,7 @@ class VisualsService:
                     pass
 
         # Wait for completion (video takes longer)
-        result = await self.comfyui.wait_for_completion(prompt_id, timeout=900)
+        result = await self.comfyui.wait_for_completion(prompt_id, timeout=3600, check_cancel=check_cancel)
         if not result:
             if log_id is not None and db is not None:
                 try:
@@ -725,7 +730,7 @@ class VisualsService:
 
             prompt = (
                 f"{trigger_prefix}{base_prompt}, 25fps, high quality, "
-                f"{aspect_term}"
+                f"{aspect_term}, no text, no captions, no subtitles, no watermark, no overlay, clean video"
             )
 
             if on_progress:
@@ -738,6 +743,7 @@ class VisualsService:
                 log_meta = {
                     "project_id": project_id,
                     "job_id": job_id,
+                    "video_index": video_index,
                     "scene_index": i,
                     "scene_number": i + 1,
                     "raw_visual_description": raw_desc,
@@ -757,6 +763,7 @@ class VisualsService:
                 video_length=video_length,
                 log_meta=log_meta,
                 db=db,
+                check_cancel=is_cancelled,
             )
 
             # Cancellation check after each scene finishes (which can take minutes)

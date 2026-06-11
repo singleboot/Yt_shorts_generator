@@ -1,9 +1,36 @@
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, event, text, TypeDecorator, String
 from sqlalchemy.orm import sessionmaker, declarative_base
 from app.config import settings
+from pathlib import Path
 
 # Ensure storage directory exists
 settings.STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+class StoragePathType(TypeDecorator):
+    """SQLAlchemy custom type that converts absolute paths to relative paths relative to
+    STORAGE_DIR on write, and resolves them back to absolute paths on read.
+    """
+    impl = String
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        try:
+            storage = Path(settings.STORAGE_DIR).resolve()
+            p = Path(value).resolve()
+            return p.relative_to(storage).as_posix()
+        except Exception:
+            # If not relative to storage or fails, return POSIX format as is
+            return Path(value).as_posix()
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        p = Path(value)
+        if p.is_absolute():
+            return str(p)
+        storage = Path(settings.STORAGE_DIR).resolve()
+        return str(storage / p)
 
 engine = create_engine(
     f"sqlite:///{settings.DB_PATH}",
@@ -29,12 +56,90 @@ def get_db():
     finally:
         db.close()
 
+def _migrate_absolute_paths_to_relative():
+    """Self-healing migration that runs on startup to convert any absolute paths
+    in the database to relative paths from STORAGE_DIR, enabling complete database portability.
+    """
+    from app import models
+    storage = Path(settings.STORAGE_DIR).resolve()
+    db = SessionLocal()
+    try:
+        # 1. YouTube Channels (credentials_file)
+        channels = db.query(models.YouTubeChannel).all()
+        for ch in channels:
+            if ch.credentials_file:
+                p = Path(ch.credentials_file)
+                if p.is_absolute():
+                    try:
+                        ch.credentials_file = p.resolve().relative_to(storage).as_posix()
+                    except ValueError:
+                        pass
+        
+        # 2. Projects (archive_path)
+        projects = db.query(models.Project).all()
+        for pr in projects:
+            if pr.archive_path:
+                p = Path(pr.archive_path)
+                if p.is_absolute():
+                    try:
+                        pr.archive_path = p.resolve().relative_to(storage).as_posix()
+                    except ValueError:
+                        pass
+
+        # 3. Assets (local_path)
+        assets = db.query(models.Asset).all()
+        for ass in assets:
+            if ass.local_path:
+                p = Path(ass.local_path)
+                if p.is_absolute():
+                    try:
+                        ass.local_path = p.resolve().relative_to(storage).as_posix()
+                    except ValueError:
+                        pass
+
+        # 4. Uploads (video_path, thumbnail_path)
+        uploads = db.query(models.Upload).all()
+        for up in uploads:
+            if up.video_path:
+                p = Path(up.video_path)
+                if p.is_absolute():
+                    try:
+                        up.video_path = p.resolve().relative_to(storage).as_posix()
+                    except ValueError:
+                        pass
+            if up.thumbnail_path:
+                p = Path(up.thumbnail_path)
+                if p.is_absolute():
+                    try:
+                        up.thumbnail_path = p.resolve().relative_to(storage).as_posix()
+                    except ValueError:
+                        pass
+
+        # 5. Prompt Logs (output_path)
+        prompt_logs = db.query(models.PromptLog).all()
+        for pl in prompt_logs:
+            if pl.output_path:
+                p = Path(pl.output_path)
+                if p.is_absolute():
+                    try:
+                        pl.output_path = p.resolve().relative_to(storage).as_posix()
+                    except ValueError:
+                        pass
+
+        db.commit()
+    except Exception as e:
+        print(f"[migration] Absolute path migration failed: {e}", flush=True)
+        db.rollback()
+    finally:
+        db.close()
+
 def init_db():
     """Create tables and apply incremental migrations for missing columns/tables."""
     Base.metadata.create_all(bind=engine)
     _run_migrations()
     _reconcile_video_counts()
     _reconcile_aspect_defaults()
+    _migrate_absolute_paths_to_relative()
 
 
 def _reconcile_video_counts():
