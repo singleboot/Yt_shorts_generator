@@ -10,31 +10,39 @@ function formatDateTime(iso) {
     + ' · ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
 
-function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onDelete, mode, onRegenScript, onRemovePlaceholder, onGenerateVideo, onCleanScenes }) {
+function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onDelete, mode, onRegenScript, onRemovePlaceholder, onGenerateVideo, onCleanScenes, videoCacheBuster, requestConfirm }) {
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState('');
+  const [showScript, setShowScript] = useState(false);
 
   const handleCancel = async () => {
     if (!job?.id) return;
-    if (!window.confirm(`Cancel video ${serial}?\n\nThis stops the running ComfyUI generation. Partial work will be lost.`)) return;
-    setCancelling(true);
-    setCancelError('');
-    try {
-      await api.post(`/jobs/${job.id}/cancel`);
-      // The video card will re-render with status='cancelled' on next poll
-    } catch (e) {
-      setCancelError(e.response?.data?.detail || e.message || 'Cancel failed');
-    } finally {
-      setCancelling(false);
+    const msg = `Cancel video ${serial}?\n\nThis stops the running ComfyUI generation. Partial work will be lost.`;
+    const performCancel = async () => {
+      setCancelling(true);
+      setCancelError('');
+      try {
+        await api.post(`/jobs/${job.id}/cancel`);
+      } catch (e) {
+        setCancelError(e.response?.data?.detail || e.message || 'Cancel failed');
+      } finally {
+        setCancelling(false);
+      }
+    };
+
+    if (requestConfirm) {
+      requestConfirm(msg, performCancel);
+    } else if (window.confirm(msg)) {
+      performCancel();
     }
   };
 
   const { index, script, upload, job, overrides, generatingDuration } = video;
   const isRunning = job?.status === 'running';
-  const isComplete = job?.status === 'completed';
+  const isComplete = job?.status === 'completed' || !!upload?.video_url;
   const isFailed = job?.status === 'failed';
   const isCancelled = job?.status === 'cancelled';
-  const isQueued = !job || job?.status === 'queued';
+  const isQueued = (!job && !upload?.video_url) || job?.status === 'queued';
   const progress = job?.progress || 0;
   const canPost = isComplete && upload?.status === 'queued';
   const canUpload = isComplete && (!upload || (upload && !upload.youtube_video_id));
@@ -48,6 +56,18 @@ function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onD
   // Elapsed timer
   const [elapsed, setElapsed] = useState(0);
   const startRef = useRef(null);
+
+  // Stateful video source to prevent player reloading during status polling renders
+  const [videoSrc, setVideoSrc] = useState('');
+
+  useEffect(() => {
+    if (upload?.video_url) {
+      const ts = videoCacheBuster || video.job?.completed_at || video.job?.started_at || project.updated_at || 'static';
+      setVideoSrc(`${upload.video_url}?t=${ts}`);
+    } else {
+      setVideoSrc('');
+    }
+  }, [upload?.video_url, video.job?.completed_at, video.job?.status, project.updated_at, videoCacheBuster]);
   // Smoothed velocity (percent per second) for stable ETA
   const velocityRef = useRef(null);          // EMA-smoothed %/s
   const lastProgressRef = useRef(0);
@@ -188,7 +208,7 @@ function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onD
             {generatingDuration && (
               <div className="text-center">
                 <div className="text-[11px] text-[#C6F11D] font-semibold">{generatingDuration}s video</div>
-                <div className="text-[10px] text-[#5F6772] mt-0.5">~{Math.ceil(generatingDuration / 60 * 2)}–{Math.ceil(generatingDuration / 60 * 4)} min</div>
+                <div className="text-[10px] text-[#5F6772] mt-0.5">~2–3 min</div>
               </div>
             )}
           </div>
@@ -295,7 +315,7 @@ function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onD
     else { titlebarClass = 'neo-titlebar-generating'; titlebarLabel = 'ASSEMBLE'; dotType = 'video'; }
   } else if (isComplete) {
     titlebarClass = 'neo-titlebar-ready';
-    titlebarLabel = upload?.status === 'queued' || upload?.status === 'done' ? 'UPLOADED' : 'COMPLETE';
+    titlebarLabel = upload?.status === 'done' ? 'UPLOADED' : (upload?.status === 'queued' ? 'QUEUED' : 'COMPLETE');
     dotType = 'video';
   } else if (isFailed) {
     titlebarClass = 'neo-titlebar-error';
@@ -316,6 +336,15 @@ function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onD
           {titlebarLabel}
         </span>
         <div className="flex items-center gap-2">
+          {script && (
+            <button
+              onClick={() => setShowScript(!showScript)}
+              className={`p-1 rounded hover:bg-[rgba(255,255,255,0.06)] transition-colors ${showScript ? 'text-[#C6F11D]' : 'text-[#9AA0A6] hover:text-[#C6F11D]'}`}
+              title={showScript ? "Show Video Player" : "Show Script Text"}
+            >
+              <Eye className="h-3.5 w-3.5" />
+            </button>
+          )}
           <span className="text-[10px] opacity-70 font-mono">#{serial}</span>
           {isRunning && <span className="text-[10px] opacity-70">{formatTime(elapsed)}</span>}
           {isRunning && job?.id && (
@@ -337,8 +366,28 @@ function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onD
         </div>
       )}
 
-      {/* Preview area */}
-      <div className="relative aspect-[5/8] bg-[#050608] overflow-hidden">
+      {/* Conditional rendering of preview area or script text */}
+      {showScript ? (
+        <div className="relative aspect-[5/8] bg-[#0A0C10] p-4 flex flex-col gap-3 overflow-y-auto border-b border-[#252A33]">
+          <div>
+            <h4 className="text-sm font-bold text-[#F5F5F5] leading-snug">
+              {script?.title || `Video ${index + 1}`}
+            </h4>
+            {dateStr && <p className="text-[10px] text-[#5F6772] mt-0.5">{dateStr}</p>}
+          </div>
+          <p className="text-xs text-[#9AA0A6] leading-relaxed whitespace-pre-wrap font-sans">
+            {script?.content || 'No script content'}
+          </p>
+          <div className="mt-auto pt-2 border-t border-[#252A33]/40 text-[11px] text-[#5F6772] flex items-center justify-between">
+            <span>{script?.scenes?.length || 0} scenes</span>
+            {displayStyle && displayStyle !== 'none' && (
+              <span className="text-[#C6F11D] capitalize">{displayStyle.replace(/_/g, ' ')}</span>
+            )}
+          </div>
+        </div>
+      ) : (
+        /* Preview area */
+        <div className="relative aspect-[5/8] bg-[#050608] overflow-hidden">
         {isRunning ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center p-4">
             <div className="relative w-14 h-14 mb-3">
@@ -369,7 +418,7 @@ function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onD
         ) : isComplete ? (
           upload?.video_url ? (
             <video
-              src={upload.video_url}
+              src={videoSrc}
               controls
               className="absolute inset-0 w-full h-full object-cover"
               poster={undefined}
@@ -404,9 +453,13 @@ function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onD
             </button>
           </div>
         ) : (
-          <div className="absolute inset-0 flex items-center justify-center bg-[#0E1116]">
-            <div className="w-16 h-16 rounded-2xl bg-[rgba(95,103,114,0.1)] border border-[rgba(95,103,114,0.2)] flex items-center justify-center">
-              <Clock className="h-8 w-8 text-[#5F6772]" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#050608] gap-3">
+            <div className="w-14 h-14 rounded-2xl bg-[rgba(198,241,29,0.05)] border border-[rgba(198,241,29,0.2)] flex items-center justify-center animate-pulse">
+              <Clock className="h-7 w-7 text-[#C6F11D]" />
+            </div>
+            <div className="text-center">
+              <p className="text-xs text-[#C6F11D] font-bold uppercase tracking-wider">Waiting in Queue</p>
+              <p className="text-[10px] text-[#5F6772] mt-0.5">Generation will start shortly...</p>
             </div>
           </div>
         )}
@@ -417,6 +470,7 @@ function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onD
           </div>
         )}
       </div>
+      )}
 
       {isComplete && (
         <div className="absolute right-0 top-1/2 -translate-y-1/2 -mr-[5px]">
@@ -492,7 +546,7 @@ function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onD
               <Youtube className="h-3.5 w-3.5" />
             </button>
           )}
-          {onGenerateVideo && (!video.job || video.job?.status === 'cancelled' || video.job?.status === 'failed') && (
+          {onGenerateVideo && !isComplete && (!video.job || video.job?.status === 'cancelled' || video.job?.status === 'failed') && (
             <button
               onClick={() => onGenerateVideo(video.index)}
               className="neo-btn-primary p-1.5"
