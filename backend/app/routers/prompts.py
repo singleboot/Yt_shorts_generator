@@ -14,6 +14,7 @@ def _serialize(p: models.PromptLog) -> dict:
         "id": p.id,
         "project_id": p.project_id,
         "job_id": p.job_id,
+        "video_index": p.video_index,
         "scene_index": p.scene_index,
         "scene_number": p.scene_number,
         "raw_visual_description": p.raw_visual_description,

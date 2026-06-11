@@ -53,7 +53,7 @@ if "!BACKEND_RUNNING!"=="1" (
     cd /d "!PROJECT_DIR!backend"
     call "venv\Scripts\activate.bat" 2>nul
     REM Start uvicorn in a hidden window, log to webapp.log
-    start /min "uvicorn" cmd /c "cd /d !PROJECT_DIR!backend && venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8002 > webapp.log 2>&1"
+    start /min "uvicorn" cmd /c "cd /d !PROJECT_DIR!backend && set PYTHONUTF8=1&& venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8002 > webapp.log 2>&1"
     echo [OK] Backend started ^(logs: backend\webapp.log^)
     cd /d "%~dp0"
 )

@@ -17,21 +17,115 @@ class AudioService:
     
     async def list_voices(self) -> List[Dict]:
         if self.voices_cache is None:
-            self.voices_cache = comfy_tts.list_voices()
+            edge_voices = [
+                {"id": "en-US-AriaNeural", "name": "Microsoft Aria (Female)", "gender": "Female", "locale": "English (US)", "provider": "edge_tts"},
+                {"id": "en-US-GuyNeural", "name": "Microsoft Guy (Male)", "gender": "Male", "locale": "English (US)", "provider": "edge_tts"},
+                {"id": "en-US-JennyNeural", "name": "Microsoft Jenny (Female)", "gender": "Female", "locale": "English (US)", "provider": "edge_tts"},
+                {"id": "en-US-MichelleNeural", "name": "Microsoft Michelle (Female)", "gender": "Female", "locale": "English (US)", "provider": "edge_tts"},
+                {"id": "en-US-ChristopherNeural", "name": "Microsoft Christopher (Male)", "gender": "Male", "locale": "English (US)", "provider": "edge_tts"},
+                {"id": "en-GB-SoniaNeural", "name": "Microsoft Sonia (Female)", "gender": "Female", "locale": "English (UK)", "provider": "edge_tts"},
+                {"id": "en-GB-RyanNeural", "name": "Microsoft Ryan (Male)", "gender": "Male", "locale": "English (UK)", "provider": "edge_tts"},
+                {"id": "en-AU-NatashaNeural", "name": "Microsoft Natasha (Female)", "gender": "Female", "locale": "English (AU)", "provider": "edge_tts"},
+            ]
+            
+            qwen_voices = []
+            try:
+                qwen_raw = comfy_tts.list_voices()
+                for v in qwen_raw:
+                    qwen_voices.append({
+                        "id": v["id"],
+                        "name": f"Qwen3 {v['name']} ({v['gender']})",
+                        "gender": v["gender"],
+                        "locale": v["locale"],
+                        "provider": "comfyui_qwen3_tts"
+                    })
+            except Exception:
+                pass
+            
+            self.voices_cache = qwen_voices + edge_voices
         return self.voices_cache
     
     async def generate_voiceover(self, text: str, voice_id: str, output_path: Path,
-                                  rate: str = "+0%", pitch: str = "+0Hz") -> bool:
-        # Use edge-tts (Microsoft online TTS) — Qwen3 TTS is broken upstream
+                                  rate: str = "-5%", pitch: str = "+0Hz", volume: str = "+10%") -> bool:
+        # Determine if it's a Qwen3 voice or Edge-TTS voice
+        qwen_ids = ["aiden", "dylan", "eric", "ono_anna", "ryan", "serena", "sohee", "uncle_fu", "vivian"]
+        is_qwen = voice_id.lower() in qwen_ids or any(q in voice_id.lower() for q in qwen_ids)
+        
+        if is_qwen:
+            try:
+                from app.services.tts import comfy_tts
+                connected = await comfy_tts.is_connected()
+                if connected:
+                    # Resolve voice_id to raw speaker name (e.g. "Aiden")
+                    speaker = voice_id
+                    if " " in voice_id:
+                        parts = voice_id.split()
+                        for p in parts:
+                            if p.lower() in qwen_ids:
+                                speaker = p
+                                break
+                    # Capitalize first letter (Aiden, Dylan, etc.)
+                    speaker = speaker.strip().capitalize()
+                    print(f"[TTS] Using ComfyUI Qwen3 TTS for voice: {speaker}")
+                    success = await comfy_tts.generate_voiceover(text, speaker, output_path)
+                    if success:
+                        return True
+                    print(f"[TTS] ComfyUI Qwen3 TTS failed, falling back to edge-tts")
+            except Exception as e:
+                print(f"[TTS] ComfyUI Qwen3 TTS error: {e}, falling back to edge-tts")
+        
+        # Otherwise (or fallback), use edge-tts (Microsoft online TTS)
         try:
             import edge_tts
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            communicate = edge_tts.Communicate(text, voice_id)
-            await communicate.save(str(output_path))
+            
+            # Map Qwen3 voice names to Edge-TTS equivalent neural voices for fallback
+            fallback_mapping = {
+                "aiden": "en-US-AriaNeural",
+                "dylan": "en-US-GuyNeural",
+                "serena": "en-US-JennyNeural",
+                "vivian": "en-US-MichelleNeural",
+                "eric": "en-US-EricNeural",
+                "ryan": "en-US-ChristopherNeural",
+                "sohee": "en-GB-SoniaNeural",
+                "uncle_fu": "en-US-GuyNeural",
+                "ono_anna": "en-US-JennyNeural"
+            }
+            
+            effective_voice = voice_id
+            for qkey, fallback_v in fallback_mapping.items():
+                if qkey in voice_id.lower():
+                    effective_voice = fallback_v
+                    break
+            
+            # If the voice name is still not a valid Microsoft voice (doesn't contain "neural"), use default
+            if "neural" not in effective_voice.lower():
+                effective_voice = "en-US-AriaNeural"
+                
+            communicate = edge_tts.Communicate(text, effective_voice, rate=rate, volume=volume, pitch=pitch, boundary="WordBoundary")
+            words_data = []
+            
+            with open(str(output_path), "wb") as f:
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        f.write(chunk["data"])
+                    elif chunk["type"] == "WordBoundary":
+                        start_time = chunk["offset"] / 10000000.0
+                        duration = chunk["duration"] / 10000000.0
+                        words_data.append({
+                            "word": chunk["text"],
+                            "start": start_time,
+                            "end": start_time + duration
+                        })
+            
             if output_path.exists() and output_path.stat().st_size > 1024:
+                import json as _json
+                json_path = output_path.with_suffix(".json")
+                with open(str(json_path), "w", encoding="utf-8") as jf:
+                    _json.dump(words_data, jf, indent=2)
                 return True
             else:
-                print(f"[TTS] edge-tts produced empty/missing file for {voice_id}")
+                print(f"[TTS] edge-tts produced empty/missing file for {effective_voice}")
                 return False
         except Exception as e:
             print(f"[TTS] edge-tts failed for {voice_id}: {e}")

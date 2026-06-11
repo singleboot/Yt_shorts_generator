@@ -3,17 +3,19 @@ import {
   Globe, RefreshCw, Filter, Search, Copy, ExternalLink,
   AlertCircle, CheckCircle, Clock, Trash2, ChevronDown, ChevronRight, Sparkles, Link2, FileText, ChevronLeft, ArrowLeft
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 
 const POLL_INTERVAL_MS = 3000;
 
 function ResearchViewer() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const projectIdParam = searchParams.get('projectId');
   const [logs, setLogs] = useState([]);
   const [stats, setStats] = useState(null);
   const [projects, setProjects] = useState([]);
-  const [filterProject, setFilterProject] = useState('all');
+  const [filterProject, setFilterProject] = useState(projectIdParam || 'all');
   const [filterSource, setFilterSource] = useState('all');
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState(new Set());
@@ -112,7 +114,13 @@ function ResearchViewer() {
       <div className="max-w-6xl mx-auto">
         {/* Back button */}
         <button
-          onClick={() => navigate(-1)}
+          onClick={() => {
+            if (projectIdParam) {
+              navigate(`/project/${projectIdParam}`);
+            } else {
+              navigate(-1);
+            }
+          }}
           className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] text-slate-300 hover:text-white bg-slate-800/50 hover:bg-slate-800 rounded-lg border border-slate-700/50 transition-colors mb-4"
           title="Go back to previous page"
         >

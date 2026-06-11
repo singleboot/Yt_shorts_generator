@@ -28,7 +28,14 @@ def get_settings(db: Session = Depends(get_db)):
     settings_dict.setdefault("ollama_host", settings.OLLAMA_HOST)
     settings_dict.setdefault("ollama_model", settings.OLLAMA_MODEL)
     settings_dict.setdefault("pixabay_api_key", settings.PIXABAY_API_KEY)
+    settings_dict.setdefault("tavily_api_key", settings.TAVILY_API_KEY)
+    settings_dict.setdefault("serper_api_key", settings.SERPER_API_KEY)
     settings_dict.setdefault("external_models_dir", settings.EXTERNAL_MODELS_DIR)
+    settings_dict.setdefault("telegram_bot_token", settings.TELEGRAM_BOT_TOKEN)
+    settings_dict.setdefault("telegram_chat_id", settings.TELEGRAM_CHAT_ID)
+    settings_dict.setdefault("telegram_default_style", settings.TELEGRAM_DEFAULT_STYLE)
+    settings_dict.setdefault("telegram_default_caption_preset", settings.TELEGRAM_DEFAULT_CAPTION_PRESET)
+    settings_dict.setdefault("telegram_default_voice", settings.TELEGRAM_DEFAULT_VOICE)
     
     return settings_dict
 
@@ -55,6 +62,11 @@ def _reload_settings(db: Session = None):
         db = SessionLocal()
     try:
         from app.services.visuals import visuals_service
+        from app.services.telegram import telegram_bot
+        
+        old_token = getattr(settings, "TELEGRAM_BOT_TOKEN", "")
+        old_chat = getattr(settings, "TELEGRAM_CHAT_ID", "")
+        
         rows = db.query(models.Setting).all()
         for row in rows:
             key_upper = row.key.upper()
@@ -64,6 +76,17 @@ def _reload_settings(db: Session = None):
                 except Exception:
                     val = row.value
                 setattr(settings, key_upper, val)
+                
+        # Handle dynamic bot restart if token or chat ID is changed
+        new_token = getattr(settings, "TELEGRAM_BOT_TOKEN", "")
+        new_chat = getattr(settings, "TELEGRAM_CHAT_ID", "")
+        if new_token != old_token or new_chat != old_chat:
+            telegram_bot.stop()
+            telegram_bot.token = new_token
+            telegram_bot.default_chat_id = new_chat
+            if new_token:
+                telegram_bot.start()
+                
         if hasattr(visuals_service, 'comfyui'):
             visuals_service.comfyui.host = settings.COMFYUI_HOST
     except Exception:

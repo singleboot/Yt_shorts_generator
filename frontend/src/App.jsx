@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, PlusCircle, Settings, Activity, Youtube, Sparkles, Terminal, Power, PowerOff, Loader2, Cpu, Globe } from 'lucide-react';
+import { LayoutDashboard, PlusCircle, Settings, Activity, Youtube, Sparkles, Terminal, Power, PowerOff, Loader2, Cpu, Globe, CheckCircle, AlertCircle } from 'lucide-react';
 import api from './api/client';
 import Dashboard from './pages/Dashboard';
 import ProjectWizard from './pages/ProjectWizard';
@@ -166,9 +166,24 @@ function App() {
 
       {/* Action toast */}
       {actionToast && (
-        <div className="fixed bottom-6 right-6 neo-card px-4 py-2.5 text-[12px] flex items-center gap-2 border-l-4 border-[#C6F11D] z-50">
-          {serviceAction ? <Loader2 className="h-4 w-4 animate-spin text-[#C6F11D]" /> : <CheckCircle className="h-4 w-4 text-[#C6F11D]" />}
-          <span className="text-[#F5F5F5]">{actionToast}</span>
+        <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none animate-in fade-in duration-200">
+          <div className="pointer-events-auto flex items-center gap-4 px-6 py-4 rounded-xl border border-[#C6F11D]/30 backdrop-blur-md shadow-[0_0_30px_rgba(198,241,29,0.15)] shadow-2xl min-w-[320px] max-w-[480px] animate-in zoom-in-95 duration-200 bg-[#0E1116]/95">
+            <div className="p-2 rounded-lg bg-[rgba(198,241,29,0.1)] text-[#C6F11D]">
+              {serviceAction ? (
+                <Loader2 className="h-6 w-6 animate-spin" />
+              ) : actionToast.toLowerCase().includes('failed') ? (
+                <AlertCircle className="h-6 w-6 text-[#FF5757]" />
+              ) : (
+                <CheckCircle className="h-6 w-6" />
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] uppercase tracking-wider font-semibold opacity-60 mb-0.5 text-[#C6F11D]">
+                System Status
+              </p>
+              <p className="text-[#F5F5F5] text-sm font-medium leading-relaxed">{actionToast}</p>
+            </div>
+          </div>
         </div>
       )}
     </div>

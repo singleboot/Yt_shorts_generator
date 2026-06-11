@@ -96,8 +96,23 @@ class VideoService:
             work_dir = output_path.parent / "_work"
             work_dir.mkdir(parents=True, exist_ok=True)
 
+            # Validate and clamp transition_duration early based on scene_clips durations
+            if transition_style != "none" and transition_duration > 0.0 and scene_clips:
+                try:
+                    durations = [self._get_duration(c) for c in scene_clips]
+                    valid_durs = [d for d in durations if d > 0]
+                    if valid_durs:
+                        min_dur = min(valid_durs)
+                        if transition_duration >= min_dur * 0.5:
+                            old = transition_duration
+                            transition_duration = round(min_dur * 0.4, 3)
+                            print(f"[assemble_video] transition_duration {old}s too long for shortest clip "
+                                  f"({min_dur:.2f}s), clamping to {transition_duration}s", flush=True)
+                except Exception as e:
+                    print(f"[assemble_video] duration probe failed: {e}", flush=True)
+
             # 1. Upscale each clip to (target_w x target_h)
-            upscaled_clips = self._upscale_clips(scene_clips, work_dir, target_width, target_height)
+            upscaled_clips = self._upscale_clips(scene_clips, work_dir, target_width, target_height, audio_assets)
 
             # 2. Concat all upscaled clips (with optional xfade transitions)
             raw_video = work_dir / "raw_concat.mp4"
@@ -113,7 +128,7 @@ class VideoService:
             # 3. Mix voiceover + music (if not already mixed)
             if mixed_audio_path is None:
                 mixed_audio_path = work_dir / "mixed_audio.mp3"
-                voiceover_path = self._concat_audio_assets(audio_assets, work_dir)
+                voiceover_path = self._concat_audio_assets(audio_assets, work_dir, scenes, upscaled_clips, transition_style, transition_duration)
                 if not voiceover_path or not music_path or not Path(music_path).exists():
                     # Use voiceover only
                     if voiceover_path:
@@ -141,20 +156,23 @@ class VideoService:
                         self._sync_mix_audio(voiceover_path, music_path, mixed_audio_path,
                                              music_volume, voice_volume)
 
-            # 4. Generate .ass subtitles
-            from app.services.captions import generate_ass_subtitles
-            ass_path = work_dir / "subtitles.ass"
-            try:
-                generate_ass_subtitles(
-                    scenes=scenes,
-                    audio_assets=audio_assets,
-                    caption_settings=caption_settings,
-                    output_path=ass_path,
-                    transition_duration=transition_duration,
-                )
-            except Exception as e:
-                print(f"Subtitle generation failed (continuing without): {e}")
-                ass_path = None
+            # 4. Generate .ass subtitles (unless style is 'none')
+            ass_path = None
+            if caption_settings.get("style") != "none":
+                from app.services.captions import generate_ass_subtitles
+                ass_path = work_dir / "subtitles.ass"
+                try:
+                    generate_ass_subtitles(
+                        scenes=scenes,
+                        audio_assets=audio_assets,
+                        caption_settings=caption_settings,
+                        output_path=ass_path,
+                        transition_duration=transition_duration,
+                        scene_clips=upscaled_clips,
+                    )
+                except Exception as e:
+                    print(f"Subtitle generation failed (continuing without): {e}")
+                    ass_path = None
 
             # 4b. Append the "like & subscribe" outro (6s) to the video stream.
             # Done before mux so the final ffmpeg call sees one continuous
@@ -207,20 +225,43 @@ class VideoService:
         mixed.close()
 
     def _upscale_clips(self, clips: List[Path], work_dir: Path,
-                       target_w: int = 1080, target_h: int = 1920) -> List[Path]:
+                       target_w: int = 1080, target_h: int = 1920,
+                       audio_assets: List[Dict] = None) -> List[Path]:
         """Upscale scene clips to (target_w x target_h) using ffmpeg lanczos.
-
-        Honors any aspect ratio - 720x1280 (vertical Shorts), 1280x720
-        (horizontal LD), 1920x1080 (horizontal HD). The hardcoded 1080:1920
-        was correct only for vertical Shorts and broke horizontal projects.
+        If a scene has a corresponding audio clip that is longer than the video,
+        tpad will duplicate the last frame (clone mode) to extend video to match.
         """
         upscaled = []
+        
+        # Map scene_index -> audio local path
+        audio_map = {}
+        if audio_assets:
+            for asset in audio_assets:
+                idx = asset.get("scene_index")
+                p = asset.get("local_path") or asset.get("path")
+                if idx is not None and p and Path(p).exists():
+                    audio_map[idx] = Path(p)
+
         for i, clip in enumerate(clips):
             out = work_dir / f"upscaled_{i:02d}.mp4"
             try:
+                # Check if we should pad this video clip to match its voiceover
+                audio_path = audio_map.get(i)
+                pad_filter = ""
+                if audio_path:
+                    v_dur = self._get_duration(clip)
+                    a_dur = self._get_duration(audio_path)
+                    if v_dur > 0 and a_dur > v_dur:
+                        pad_dur = a_dur - v_dur
+                        # Add a tiny safety margin to prevent rounding cutoffs
+                        pad_filter = f",tpad=stop_mode=clone:stop_duration={pad_dur + 0.1}"
+                        print(f"[video pad] Scene {i} video={v_dur:.2f}s, audio={a_dur:.2f}s. Padding video by {pad_dur:.2f}s", flush=True)
+
+                vf_chain = f"scale={target_w}:{target_h}:flags=lanczos{pad_filter}"
+
                 cmd = [
                     "ffmpeg", "-y", "-i", str(clip),
-                    "-vf", f"scale={target_w}:{target_h}:flags=lanczos",
+                    "-vf", vf_chain,
                     "-c:v", "libx264", "-preset", "fast", "-crf", "20",
                     "-c:a", "aac", "-b:a", "128k",
                     "-pix_fmt", "yuv420p",
@@ -291,7 +332,7 @@ class VideoService:
             concat_list = output.parent / "concat_list.txt"
             with open(concat_list, "w") as f:
                 for clip in clips:
-                    f.write(f"file '{clip.resolve()}'\n")
+                    f.write(f"file '{clip.resolve().as_posix()}'\n")
 
             intermediate = output.parent / "concat_intermediate.mp4"
             # Check if any clip has audio — if not, skip audio encoding
@@ -474,27 +515,110 @@ class VideoService:
         except Exception:
             return 0.0
 
-    def _concat_audio_assets(self, audio_assets: List[Dict], work_dir: Path) -> Path:
-        """Concatenate per-scene voiceover files into one mp3."""
+    def _concat_audio_assets(self, audio_assets: List[Dict], work_dir: Path, scenes: List[Dict] = None, scene_clips: List[Path] = None, transition_style: str = "none", transition_duration: float = 0.0) -> Path:
+        """Concatenate per-scene voiceover files into one mp3, padding or trimming each to its scene duration.
+        If transitions are active, crossfades them to match the visual timeline length.
+        """
         if not audio_assets:
             return None
-        if len(audio_assets) == 1:
+        if len(audio_assets) == 1 and not (audio_assets[0].get("scene_index") == 999 or scenes):
             return Path(audio_assets[0]["local_path"])
 
         output = work_dir / "voiceover_full.mp3"
         try:
             inputs = []
-            for asset in audio_assets:
+            for i, asset in enumerate(audio_assets):
                 p = asset.get("local_path")
-                if p and Path(p).exists():
-                    inputs.append(str(p))
+                if not p or not Path(p).exists():
+                    continue
+
+                # Determine target duration
+                scene_idx = asset.get("scene_index")
+                target_dur = 6.0
+                if scene_idx == 999:
+                    target_dur = float(asset.get("duration_seconds", 6.0) or 6.0)
+                elif scene_clips and isinstance(scene_idx, int) and 0 <= scene_idx < len(scene_clips) and Path(scene_clips[scene_idx]).exists():
+                    target_dur = self._get_duration(Path(scene_clips[scene_idx]))
+                    if target_dur <= 0.0:
+                        target_dur = float(scenes[scene_idx].get("duration_seconds", 6.0) or 6.0) if scenes else 6.0
+                elif scenes and isinstance(scene_idx, int) and 0 <= scene_idx < len(scenes):
+                    target_dur = float(scenes[scene_idx].get("duration_seconds", 6.0) or 6.0)
+                else:
+                    target_dur = float(asset.get("duration_seconds", 6.0) or 6.0)
+
+                # Probe actual duration
+                actual_dur = self._get_duration(Path(p))
+                if actual_dur > 0:
+                    if actual_dur < target_dur:
+                        padded_path = work_dir / f"padded_{i:02d}.mp3"
+                        try:
+                            cmd = [
+                                "ffmpeg", "-y", "-i", str(p),
+                                "-af", f"apad=whole_dur={target_dur}",
+                                str(padded_path)
+                            ]
+                            subprocess.run(cmd, check=True, capture_output=True)
+                            if padded_path.exists() and padded_path.stat().st_size > 1024:
+                                p = str(padded_path)
+                                print(f"[audio concat] Padded asset {i} ({actual_dur:.2f}s) to {target_dur:.2f}s", flush=True)
+                        except Exception as pe:
+                            print(f"[audio concat] Padding failed for asset {i}: {pe}", flush=True)
+                    elif actual_dur > target_dur:
+                        trimmed_path = work_dir / f"trimmed_{i:02d}.mp3"
+                        try:
+                            cmd = [
+                                "ffmpeg", "-y", "-i", str(p),
+                                "-t", f"{target_dur}",
+                                str(trimmed_path)
+                            ]
+                            subprocess.run(cmd, check=True, capture_output=True)
+                            if trimmed_path.exists() and trimmed_path.stat().st_size > 1024:
+                                p = str(trimmed_path)
+                                print(f"[audio concat] Trimmed asset {i} ({actual_dur:.2f}s) to {target_dur:.2f}s", flush=True)
+                        except Exception as te:
+                            print(f"[audio concat] Trimming failed for asset {i}: {te}", flush=True)
+
+                inputs.append(str(p))
+
             if not inputs:
                 return None
 
+            # If transitions are active, crossfade the audio assets using filter_complex acrossfade
+            if transition_style != "none" and transition_duration > 0.0 and len(inputs) > 1:
+                try:
+                    cmd = ["ffmpeg", "-y"]
+                    for inp in inputs:
+                        cmd.extend(["-i", inp])
+                    
+                    af = []
+                    for i in range(1, len(inputs)):
+                        a_in = "[0:a]" if i == 1 else f"[a{i-1}{i}]"
+                        a_out = f"a{i}{i+1}" if i < len(inputs) - 1 else "aout"
+                        af.append(
+                            f"{a_in}[{i:d}:a]acrossfade=d={transition_duration}:c1=tri:c2=tri[{a_out}]"
+                        )
+                    
+                    filter_str = ";".join(af)
+                    cmd.extend([
+                        "-filter_complex", filter_str,
+                        "-map", "[aout]",
+                        "-c:a", "libmp3lame", "-q:a", "2",
+                        str(output)
+                    ])
+                    
+                    print(f"[audio concat] Performing acrossfade with td={transition_duration}s for {len(inputs)} voice files", flush=True)
+                    res = subprocess.run(cmd, capture_output=True, text=True)
+                    if res.returncode == 0:
+                        return output
+                    print(f"[audio concat] acrossfade failed, falling back to hardcut concat: {res.stderr[:300]}", flush=True)
+                except Exception as e:
+                    print(f"[audio concat] acrossfade exception: {e}, falling back to hardcut concat", flush=True)
+
+            # Fallback (or default for none transition): hardcut concat demuxer
             concat_list = work_dir / "audio_concat_list.txt"
             with open(concat_list, "w") as f:
                 for inp in inputs:
-                    f.write(f"file '{Path(inp).resolve()}'\n")
+                    f.write(f"file '{Path(inp).resolve().as_posix()}'\n")
 
             cmd = [
                 "ffmpeg", "-y", "-f", "concat", "-safe", "0",
@@ -505,7 +629,7 @@ class VideoService:
             subprocess.run(cmd, check=True, capture_output=True)
             return output
         except subprocess.CalledProcessError as e:
-            print(f"Audio concat failed: {e}")
+            print(f"Audio concat failed: {e.stderr.decode() if e.stderr else e}")
             return Path(audio_assets[0]["local_path"]) if audio_assets else None
 
     def _normalize_outro(self, outro_path: Path, target_w: int, target_h: int,
@@ -548,6 +672,7 @@ class VideoService:
             "ffmpeg", "-y",
             "-i", str(outro_path),
             "-vf", vf,
+            "-t", str(settings.OUTRO_DURATION_SECONDS),
             "-c:v", "libx264", "-preset", "fast", "-crf", "20",
             "-pix_fmt", "yuv420p",
         ]
@@ -630,12 +755,21 @@ class VideoService:
         """Final mux: combine video, audio, and (optional) .ass subtitles."""
         try:
             if ass_subs and ass_subs.exists():
+                # On Windows, absolute paths in subtitles filter must escape the colon (e.g., C\:/path/to/file)
+                # and use forward slashes.
+                try:
+                    rel_p = os.path.relpath(ass_subs)
+                    sub_arg = rel_p.replace(os.sep, '/')
+                except ValueError:
+                    abs_p = str(ass_subs.resolve()).replace('\\', '/')
+                    sub_arg = abs_p.replace(':', '\\:')
+
                 # Use subtitles filter for .ass burn-in
                 cmd = [
                     "ffmpeg", "-y",
                     "-i", str(video),
                     "-i", str(audio),
-                    "-vf", f"subtitles={str(ass_subs).replace(chr(92), '/')}",
+                    "-vf", f"subtitles={sub_arg}",
                     "-c:v", "libx264", "-preset", "fast", "-crf", "20",
                     "-c:a", "aac", "-b:a", "192k",
                     "-pix_fmt", "yuv420p",

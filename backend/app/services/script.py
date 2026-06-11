@@ -51,7 +51,8 @@ class ScriptService:
     async def generate_script(self, topic: str, category: str, context: str,
                               duration: int = 45, style: str = "engaging",
                               voice_id: str = None, music_genre: str = None,
-                              voice_custom: str = None, music_custom: str = None) -> Dict:
+                              voice_custom: str = None, music_custom: str = None,
+                              prev_scripts_context: str = "") -> Dict:
         """Generate a full script with scenes using Ollama."""
 
         # Scene pacing. The user's requested total duration is split into:
@@ -97,7 +98,17 @@ class ScriptService:
 
         # Category-specific tone instructions
         if category.lower() in ("history", "historical"):
-            category_instruction = "This is a HISTORY video. Write a historical narrative about the subject — origins, key events, evolution over time, historical significance. NOT a contemporary/modern description."
+            category_instruction = (
+                "This is a HISTORY video. You MUST write a historical narrative about the subject. "
+                "Frame the topic with rich historical context: cover the origins, compare past history to the present "
+                "(e.g., contrast past tournaments, historical statistics, or past records with the subject), "
+                "detail key historical events, evolution over time, and its historical significance. "
+                "CRITICAL FOR HISTORY TONE:\n"
+                "- Do NOT write a purely contemporary news-style description, current qualifiers breakdown, or modern overview.\n"
+                "- At least 70% of the narration MUST cover the historical backstory, origins, and past evolution (mentioning specific past years, tournaments, e.g. 1930, 1982, 1998, past milestones, or former legends) of the subject.\n"
+                "- The narration MUST sound like a professional, high-quality historical documentary narrator (e.g. 'For nearly a century...', 'Historically, the journey began in...', 'Legendary squads of the past...').\n"
+                "- Only refer to the modern/present event (like World Cup 2026) as a brief comparison or resolution at the end of the script."
+            )
         elif category.lower() in ("children story", "children's story", "kids story", "kids", "children"):
             category_instruction = "This is a CHILDREN'S STORY. Write a whimsical, age-appropriate story with simple language, fun characters, clear moral/lesson, and imaginative scenes. NOT a factual documentary."
         elif category.lower() in ("science", "technology", "tech"):
@@ -106,6 +117,8 @@ class ScriptService:
             category_instruction = "This is a SPORTS video. Write with high energy, focus on epic moments, athlete achievements, records, and game-defining plays."
         elif category.lower() in ("entertainment", "celebrity", "pop culture"):
             category_instruction = "This is an ENTERTAINMENT video. Write a fast-paced, gossipy, pop-culture style piece with surprising reveals and hype."
+        elif category.lower() in ("reddit", "reddit_stories", "reddit story", "aita", "askreddit", "stories"):
+            category_instruction = "This is a REDDIT STORY / AITA video. Retell the Reddit story from a first-person dramatic perspective ('I', 'my'). Maintain the original narrative conflict, suspense, and emotional hook, keeping it conversational and highly engaging for vertical video formats."
         else:
             category_instruction = "Write a general engaging YouTube Shorts script appropriate for the subject."
 
@@ -152,6 +165,7 @@ CANNOT render well — DO NOT USE:
 - Photo/film/documentary effects ("archival black and white", "8mm film grain", "vintage filter") — these produce inconsistent results
 - Heavy text overlays, logos, on-screen graphics
 - People doing complex choreographed actions (dance routines, full football matches)
+- Any text, words, labels, signs, alphabets, letters, or subtitles. The video frames MUST be strictly visual without any textual characters. All captions/text are burned-in separately.
 
 EVERY visual_description must follow this template:
 "[Camera move] of [single specific subject] in [specific location/setting], [doing one clear action or held pose], [lighting], [mood/style], [any style LoRA triggers if relevant], high detail, cinematic, 9:16 vertical"
@@ -226,18 +240,10 @@ Requirements:
 3. VISUAL CONTINUITY: Pick 2-3 recurring visual anchors (e.g., "stadium at twilight", "vintage leather ball", "lone player") and use them across multiple scenes
 4. CAMERA VARIETY: Each scene must use a DIFFERENT camera move from this set: slow push-in, slow pan, slow dolly forward, slow orbit, slow zoom, static wide, slow tilt up
 5. CLIMAX: Scene {num_scenes - 1} must be visually the most dramatic (e.g., a goal scored, a trophy lifted, a crowd erupting)
-6. CLOSING SHOT + CTA: Scene {num_scenes} is the final scene and MUST combine TWO things in ONE narration_text of 22-30 words:
-   - A short reflective wrap-up (1-2 sentences) about the story/topic
-   - A clear, explicit call-to-action at the end that:
-     * Mentions the channel niche (e.g., "for more legendary sports history", "for more untold stories", "for the next chapter in history")
-     * Names specific actions: "Like", "Subscribe", AND "hit the bell" (all three)
-     * Sounds natural spoken aloud (not a marketing tagline)
-   - Examples of GOOD final scene narration_text (must be 22-30 words, fits ~6-7s spoken):
-     * "From a humble pitch in Uruguay to a global phenomenon watched by billions. Like, subscribe, and hit the bell for more legendary sports history."
-     * "And so the World Cup's greatest story is far from over. Like this video, subscribe to our channel, and hit the bell so you never miss a chapter."
-     * "The story of [topic] shows us how far humanity can go. Like, subscribe, and hit the bell for more incredible stories from history."
-   - The visual should still be a deliberate, slow, contemplative closing shot (trophy, lone object, empty stadium, wide sunset) — the CTA is spoken, not displayed
-   - NEVER end the script abruptly. The final narration_text MUST end with a CTA sentence that contains the words "Like", "Subscribe", and "bell" (or "notification").
+6. CLOSING SHOT: Scene {num_scenes} is the final scene and must consist of a short, reflective wrap-up (1-2 sentences) about the story/topic.
+   - Do NOT include any call-to-action (CTA) such as "like", "subscribe", or "hit the bell" in the narration text of this scene. The narration text should purely wrap up the story topic itself.
+   - The visual should still be a deliberate, slow, contemplative closing shot (trophy, lone object, empty stadium, wide sunset).
+   - The narration text should end cleanly by wrapping up the topic.
 7. Also generate:
    - title: catchy, max 60 chars
    - description: 2-sentence summary
@@ -264,6 +270,16 @@ Respond ONLY in valid JSON. No markdown, no commentary, no code blocks — just 
   "call_to_action": "Like and subscribe for more!",
   "music_prompt": "genre, mood, instruments, BPM, key"
 }}"""
+
+        if prev_scripts_context:
+            prompt += f"""
+
+CRITICAL — PREVENT DUPLICATION:
+This is part of a multi-video batch. To prevent duplicate videos, the following script(s) have already been generated for this project:
+{prev_scripts_context}
+
+You MUST generate a completely unique script. Do NOT reuse the same hooks, key facts, stories, visual descriptions, or phrasing from the scripts shown above. Focus on completely different aspects, angles, or facts!
+"""
 
         response = await research_service._ollama_generate(prompt, system_prompt)
 
@@ -336,58 +352,9 @@ Respond ONLY in valid JSON. No markdown, no commentary, no code blocks — just 
         """Guarantee the last scene's narration_text ends with an explicit
         Like / Subscribe / bell call-to-action.
 
-        If the LLM already included all three keywords, we leave the text
-        alone. Otherwise we append a channel-niche-specific CTA so the script
-        never ends abruptly.
+        We now generate a separate outro voiceover for the final 6 seconds,
+        so we do not enforce or append any CTA in the main scenes' narration text.
         """
-        scenes = script_data.get("scenes") or []
-        if not scenes:
-            return script_data
-
-        last = scenes[-1]
-        if not isinstance(last, dict):
-            return script_data
-
-        narration = (last.get("narration_text") or "").strip()
-        if not narration:
-            return script_data
-
-        text_lower = narration.lower()
-        has_like = ("like" in text_lower)
-        has_subscribe = ("subscribe" in text_lower)
-        has_bell = ("bell" in text_lower or "notification" in text_lower)
-
-        if has_like and has_subscribe and has_bell:
-            return script_data  # LLM did it right
-
-        # Build a channel-niche phrase based on the topic/category.
-        topic_short = (topic or "more stories").strip()
-        if not topic_short:
-            topic_short = "more stories"
-        # Truncate topic to a friendly phrase
-        if len(topic_short) > 50:
-            topic_short = topic_short[:47] + "..."
-
-        if category.lower() in ("history", "sports", "tech", "science", "geography"):
-            niche_phrase = f"for more {category} stories like this"
-        else:
-            niche_phrase = f"for more {topic_short} content"
-
-        cta = f"Like, subscribe, and hit the bell {niche_phrase}."
-
-        if has_like and has_subscribe:
-            # missing bell
-            narration = f"{narration.rstrip('.! ')}. {cta}"
-        elif has_like and has_bell:
-            # missing subscribe
-            narration = f"{narration.rstrip('.! ')}. Subscribe and hit the bell {niche_phrase}."
-        else:
-            # missing all/none — append full CTA
-            narration = f"{narration.rstrip('.! ')}. {cta}"
-
-        last["narration_text"] = narration
-        scenes[-1] = last
-        script_data["scenes"] = scenes
         return script_data
     
     async def split_script_into_scenes(self, script_text: str) -> List[Dict]:

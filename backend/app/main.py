@@ -8,6 +8,7 @@ from app.database import init_db
 from app.seed import create_example_project
 from app.routers import projects, scripts, jobs, uploads, settings as settings_router, prompts, system
 from app.routers import research as research_router
+from app.services.telegram import telegram_bot
 import os
 import sys
 
@@ -43,6 +44,14 @@ def _open_browser(url: str) -> None:
 # Startup banner
 @app.on_event("startup")
 async def startup_event():
+    # Load settings from database
+    from app.routers.settings import _reload_settings
+    _reload_settings()
+
+    # Ensure telegram bot is started if token exists and not already running
+    if telegram_bot.token and not telegram_bot.running:
+        telegram_bot.start()
+
     print("\n" + "="*60)
     print("   AI SHORTS CREATOR - Web App")
     print("="*60)
@@ -93,6 +102,10 @@ async def startup_event():
     except Exception as e:
         print(f"   SageAttention: probe failed (ComfyUI not reachable: {e})")
     print("="*60 + "\n")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    telegram_bot.stop()
 
 # CORS
 app.add_middleware(

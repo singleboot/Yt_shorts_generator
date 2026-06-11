@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Youtube, Link, Key, Server, Save, CheckCircle, XCircle, Cpu, Image, Film, Database, RefreshCw, Plus, Trash2, ExternalLink, RefreshCcw, Archive, Upload, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, Circle, X, Power, PowerOff, Loader2 } from 'lucide-react';
+import { Youtube, Link, Key, Server, Save, CheckCircle, XCircle, Cpu, Image, Film, Database, RefreshCw, Plus, Trash2, ExternalLink, RefreshCcw, Archive, Upload, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, Circle, X, Power, PowerOff, Loader2, Globe } from 'lucide-react';
 import api from '../api/client';
 
 function SettingsPage() {
@@ -7,12 +7,14 @@ function SettingsPage() {
   const [channels, setChannels] = useState([]);
   const [comfyuiStatus, setComfyuiStatus] = useState({ status: 'unknown' });
   const [modelInfo, setModelInfo] = useState(null);
+  const [voices, setVoices] = useState([]);
   const [externalModelsDir, setExternalModelsDir] = useState('');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [linking, setLinking] = useState(false);
   const [setupInfo, setSetupInfo] = useState({ secrets_file_exists: false });
   const [showSetupGuide, setShowSetupGuide] = useState(false);
+  const [showTelegramGuide, setShowTelegramGuide] = useState(false);
   const [linkState, setLinkState] = useState('idle');
   const [linkError, setLinkError] = useState('');
   const [pendingChannel, setPendingChannel] = useState(null);
@@ -29,6 +31,7 @@ function SettingsPage() {
     loadChannels();
     checkStatuses();
     loadModelInfo();
+    loadVoices();
     loadSetupInfo();
     checkSystemStatus();
     const statusPoll = setInterval(checkSystemStatus, 5000);
@@ -145,6 +148,15 @@ function SettingsPage() {
       }
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const loadVoices = async () => {
+    try {
+      const res = await api.get('/settings/voices');
+      setVoices(res.data);
+    } catch (e) {
+      console.error('Failed to load voices:', e);
     }
   };
 
@@ -790,6 +802,177 @@ function SettingsPage() {
             <p className="text-[11px] text-[#5F6772] mt-1">
               Optional. Improves stock footage results. Free at pixabay.com/api/docs
             </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-[#9AA0A6] uppercase tracking-wider mb-2">Tavily AI API Key</label>
+            <input
+              type="password"
+              value={settings.tavily_api_key || ''}
+              onChange={(e) => setSettings({ ...settings, tavily_api_key: e.target.value })}
+              placeholder="Optional - get API key from tavily.com"
+              className="w-full px-4 py-2.5 rounded-xl bg-[#0E1116] border border-[#252A33] text-[#F5F5F5] placeholder-[#5F6772] outline-none focus:border-[#C6F11D]/50 transition-all"
+            />
+            <p className="text-[11px] text-[#5F6772] mt-1">
+              Paid AI Search source. Enables synthesized agentic research from tavily.com.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-[#9AA0A6] uppercase tracking-wider mb-2">Serper Google API Key</label>
+            <input
+              type="password"
+              value={settings.serper_api_key || ''}
+              onChange={(e) => setSettings({ ...settings, serper_api_key: e.target.value })}
+              placeholder="Optional - get API key from serper.dev"
+              className="w-full px-4 py-2.5 rounded-xl bg-[#0E1116] border border-[#252A33] text-[#F5F5F5] placeholder-[#5F6772] outline-none focus:border-[#C6F11D]/50 transition-all"
+            />
+            <p className="text-[11px] text-[#5F6772] mt-1">
+              Paid Google Search source. Direct high-quality organic results via serper.dev.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Telegram Bot */}
+      <div className="neo-card p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <Globe className="h-5 w-5 text-[#C6F11D]" />
+            <div>
+              <h3 className="text-lg font-semibold text-[#F5F5F5]">Telegram Bot Agent</h3>
+              <p className="text-xs text-[#9AA0A6] mt-0.5">Control and trigger video generation jobs directly from Telegram.</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowTelegramGuide(!showTelegramGuide)}
+            className="neo-btn-ghost flex items-center gap-1 px-3 py-1.5 text-xs"
+          >
+            {showTelegramGuide ? 'Hide' : 'Show'} instructions
+            {showTelegramGuide ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+
+        {/* Telegram Guide */}
+        {showTelegramGuide && (
+          <div className="mb-4 p-5 rounded-2xl bg-[#0E1116] border border-[#252A33]">
+            <h4 className="text-sm font-semibold text-[#F5F5F5] mb-3 flex items-center gap-2">
+              <Globe className="h-4 w-4 text-[#C6F11D]" />
+              How to setup the Telegram Bot Agent
+            </h4>
+            <ol className="space-y-3 text-sm text-[#9AA0A6]">
+              <li className="flex gap-3">
+                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-[#C6F11D] text-[#050608] flex items-center justify-center text-xs font-bold">1</span>
+                <div>
+                  <p className="text-[#F5F5F5]">Search for the official account <span className="text-[#C6F11D]">@BotFather</span> on Telegram and send <span className="font-mono">/newbot</span>.</p>
+                </div>
+              </li>
+              <li className="flex gap-3">
+                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-[#C6F11D] text-[#050608] flex items-center justify-center text-xs font-bold">2</span>
+                <div>
+                  <p className="text-[#F5F5F5]">Choose a display name and a username ending in <span className="font-mono">_bot</span> (e.g. `shorts_creator_bot`).</p>
+                </div>
+              </li>
+              <li className="flex gap-3">
+                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-[#C6F11D] text-[#050608] flex items-center justify-center text-xs font-bold">3</span>
+                <div>
+                  <p className="text-[#F5F5F5]">Copy the HTTP API Token provided by BotFather and paste it below into the **Telegram Bot Token** field.</p>
+                </div>
+              </li>
+              <li className="flex gap-3">
+                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-[#C6F11D] text-[#050608] flex items-center justify-center text-xs font-bold">4</span>
+                <div>
+                  <p className="text-[#F5F5F5]"><strong>(Optional security lock)</strong>: Search for <span className="text-[#C6F11D]">@userinfobot</span> to get your profile numeric ID and paste it in the **Telegram Chat ID** field.</p>
+                </div>
+              </li>
+              <li className="flex gap-3">
+                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-[#C6F11D] text-[#050608] flex items-center justify-center text-xs font-bold">5</span>
+                <div>
+                  <p className="text-[#F5F5F5]">Open your new bot chat on Telegram, click **Start**, and send your topic directly (e.g. <em>“facts about deep sea”</em>) to generate shorts!</p>
+                </div>
+              </li>
+            </ol>
+          </div>
+        )}
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-[#9AA0A6] uppercase tracking-wider mb-2">Telegram Bot Token</label>
+            <input
+              type="password"
+              value={settings.telegram_bot_token || ''}
+              onChange={(e) => setSettings({ ...settings, telegram_bot_token: e.target.value })}
+              placeholder="e.g. 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
+              className="w-full px-4 py-2.5 rounded-xl bg-[#0E1116] border border-[#252A33] text-[#F5F5F5] placeholder-[#5F6772] outline-none focus:border-[#C6F11D]/50 transition-all"
+            />
+            <p className="text-[11px] text-[#5F6772] mt-1">Get this token from @BotFather on Telegram.</p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-[#9AA0A6] uppercase tracking-wider mb-2">Telegram Chat ID (Optional)</label>
+            <input
+              type="text"
+              value={settings.telegram_chat_id || ''}
+              onChange={(e) => setSettings({ ...settings, telegram_chat_id: e.target.value })}
+              placeholder="e.g. 987654321"
+              className="w-full px-4 py-2.5 rounded-xl bg-[#0E1116] border border-[#252A33] text-[#F5F5F5] placeholder-[#5F6772] outline-none focus:border-[#C6F11D]/50 transition-all"
+            />
+            <p className="text-[11px] text-[#5F6772] mt-1">
+              Optional. Keep empty to let anyone message the bot, or specify your numeric chat ID to lock interactions.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+            <div>
+              <label className="block text-xs font-semibold text-[#9AA0A6] uppercase tracking-wider mb-2">Default Style</label>
+              <select
+                value={settings.telegram_default_style || ''}
+                onChange={(e) => setSettings({ ...settings, telegram_default_style: e.target.value })}
+                className="w-full px-4 py-2.5 rounded-xl bg-[#0E1116] border border-[#252A33] text-[#F5F5F5] outline-none focus:border-[#C6F11D]/50 transition-all"
+              >
+                <option value="">Cinematic (None / Default)</option>
+                {modelInfo?.styles?.map((style) => (
+                  <option key={style.id} value={style.id}>
+                    {style.name} {!style.available && '(Unavailable)'}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-[#5F6772] mt-1">Default style for generated visuals.</p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#9AA0A6] uppercase tracking-wider mb-2">Default Caption Preset</label>
+              <select
+                value={settings.telegram_default_caption_preset || ''}
+                onChange={(e) => setSettings({ ...settings, telegram_default_caption_preset: e.target.value })}
+                className="w-full px-4 py-2.5 rounded-xl bg-[#0E1116] border border-[#252A33] text-[#F5F5F5] outline-none focus:border-[#C6F11D]/50 transition-all"
+              >
+                <option value="">TikTok Bold (Default)</option>
+                <option value="tiktok_bold">TikTok Bold</option>
+                <option value="retro_typewriter">Typewriter</option>
+                <option value="dynamic_karaoke">Karaoke</option>
+                <option value="premium_boxed">Boxed</option>
+                <option value="neon_minimal">Neon Minimal</option>
+              </select>
+              <p className="text-[11px] text-[#5F6772] mt-1">Default style preset for text captions.</p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#9AA0A6] uppercase tracking-wider mb-2">Default Voice</label>
+              <select
+                value={settings.telegram_default_voice || ''}
+                onChange={(e) => setSettings({ ...settings, telegram_default_voice: e.target.value })}
+                className="w-full px-4 py-2.5 rounded-xl bg-[#0E1116] border border-[#252A33] text-[#F5F5F5] outline-none focus:border-[#C6F11D]/50 transition-all"
+              >
+                <option value="">Select a default voice...</option>
+                {voices?.map((voice) => (
+                  <option key={voice.name} value={voice.name}>
+                    {voice.display_name || voice.name} ({voice.gender}, {voice.locale})
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-[#5F6772] mt-1">Default TTS voice for video narration.</p>
+            </div>
           </div>
         </div>
       </div>

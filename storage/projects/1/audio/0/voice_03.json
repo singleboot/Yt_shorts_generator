@@ -1,0 +1,77 @@
+[
+  {
+    "word": "The",
+    "start": 0.102625,
+    "end": 0.27366599999999996
+  },
+  {
+    "word": "biggest",
+    "start": 0.286833,
+    "end": 0.694708
+  },
+  {
+    "word": "shift",
+    "start": 0.707875,
+    "end": 1.2605
+  },
+  {
+    "word": "Jumping",
+    "start": 2.171041,
+    "end": 2.6315820000000003
+  },
+  {
+    "word": "from",
+    "start": 2.64475,
+    "end": 2.828958
+  },
+  {
+    "word": "thirty-two",
+    "start": 2.842125,
+    "end": 3.368458
+  },
+  {
+    "word": "teams",
+    "start": 3.381583,
+    "end": 3.828958
+  },
+  {
+    "word": "to",
+    "start": 3.842125,
+    "end": 3.973708
+  },
+  {
+    "word": "a",
+    "start": 3.986833,
+    "end": 4.065791
+  },
+  {
+    "word": "massive",
+    "start": 4.078958,
+    "end": 4.526333
+  },
+  {
+    "word": "forty-eight",
+    "start": 4.539458,
+    "end": 5.249999
+  },
+  {
+    "word": "That's",
+    "start": 6.157875,
+    "end": 6.473666
+  },
+  {
+    "word": "unprecedented",
+    "start": 6.486833,
+    "end": 7.368416
+  },
+  {
+    "word": "global",
+    "start": 7.381583,
+    "end": 7.776333
+  },
+  {
+    "word": "football",
+    "start": 7.789458,
+    "end": 8.355249
+  }
+]

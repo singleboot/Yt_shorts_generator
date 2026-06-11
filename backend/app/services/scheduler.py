@@ -126,16 +126,23 @@ class SchedulerService:
             db.close()
     
     def _process_job_queue(self):
-        """Process queued generation jobs sequentially, one at a time."""
-        # Non-blocking acquire so that only one thread runs the queue processor loop at a time.
+        """Process ONE queued generation job, then return.
+
+        The APScheduler periodic trigger (every 10 s) will pick up the next
+        queued job after the current one finishes.  This guarantees strictly
+        sequential execution: one complete video is produced before the next
+        one starts, regardless of how many are queued.
+        """
+        # Non-blocking acquire so that only one thread drives the queue at a time.
         if not self._queue_lock.acquire(blocking=False):
             return
 
         try:
             db = SessionLocal()
             try:
-                # Check if there is already a running generation job.
-                # If so, do not start another one to prevent GPU congestion.
+                # If any generation job is still marked "running" (e.g. from a
+                # previous call that is not yet finished), do nothing — the
+                # periodic trigger will retry in 10 s.
                 running_job = db.query(models.Job).filter(
                     models.Job.status == "running",
                     models.Job.job_type.in_(["batch", "generate", "video"])
@@ -143,40 +150,54 @@ class SchedulerService:
                 if running_job:
                     return
 
-                while True:
-                    # Fetch the oldest queued job
-                    job = db.query(models.Job).filter(
-                        models.Job.status == "queued",
-                        models.Job.job_type.in_(["batch", "generate", "video"])
-                    ).order_by(models.Job.id.asc()).first()
-                    
-                    if not job:
-                        break
-                    
-                    # Mark it as running immediately
-                    job.status = "running"
-                    job.started_at = datetime.utcnow()
+                # Fetch the single oldest queued job.
+                job = db.query(models.Job).filter(
+                    models.Job.status == "queued",
+                    models.Job.job_type.in_(["batch", "generate", "video"])
+                ).order_by(models.Job.id.asc()).first()
+
+                if not job:
+                    return
+
+                # Mark it as running immediately so concurrent callers see it.
+                job.status = "running"
+                job.started_at = datetime.utcnow()
+                db.commit()
+                db.refresh(job)
+
+                try:
+                    if job.job_type == "video":
+                        self._run_single_video_job(db, job)
+                    else:
+                        self._run_generation_job(db, job)
+                    job.status = "completed"
+                    job.progress = 100
                     db.commit()
-                    db.refresh(job)
-                    
-                    try:
-                        if job.job_type == "video":
-                            self._run_single_video_job(db, job)
-                        else:
-                            self._run_generation_job(db, job)
-                        job.status = "completed"
-                        job.progress = 100
-                        db.commit()
-                        telegram_bot.notify_job_status(job.id, job.logs, job.progress, job.status, result=getattr(job, "result", None))
-                    except Exception as e:
-                        job.status = "failed"
-                        job.logs += f"\nError: {str(e)}"
-                        db.commit()
-                        telegram_bot.notify_job_status(job.id, job.logs, job.progress, job.status)
+                    telegram_bot.notify_job_status(job.id, job.logs, job.progress, job.status, result=getattr(job, "result", None))
+                except Exception as e:
+                    job.status = "failed"
+                    job.logs += f"\nError: {str(e)}"
+                    db.commit()
+                    telegram_bot.notify_job_status(job.id, job.logs, job.progress, job.status)
             finally:
                 db.close()
         finally:
             self._queue_lock.release()
+
+        # After completing (or failing) a job, schedule an immediate check for
+        # the next queued job via APScheduler (avoids deep recursion for large
+        # batches and keeps the call stack clean).
+        try:
+            self.scheduler.add_job(
+                self._process_job_queue,
+                "date",
+                run_date=datetime.now() + timedelta(seconds=1),
+                id="job_queue_next",
+                replace_existing=True,
+            )
+        except Exception:
+            pass  # Non-fatal — periodic 10-second trigger will catch it
+
     
     def _run_generation_job(self, db, job):
         """Run the full generation pipeline for a project. Generates video_count videos."""
@@ -228,14 +249,13 @@ class SchedulerService:
         db.commit()
     
     def _run_single_video_job_by_id(self, job_id: int):
-        """Wrapper that creates a DB session and runs the single video job by ID."""
-        db = SessionLocal()
-        try:
-            job = db.query(models.Job).get(job_id)
-            if job and job.status == "queued":
-                self._run_single_video_job(db, job)
-        finally:
-            db.close()
+        """Wrapper that processes the job queue, ensuring only one video runs at a time.
+
+        Previously this called _run_single_video_job directly, which bypassed the
+        queue lock and the running-job guard. Now we delegate to _process_job_queue
+        so that all sequencing logic is in one place.
+        """
+        self._process_job_queue()
 
     def _run_single_video_job(self, db, job):
         """Generate a single video for a project."""

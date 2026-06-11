@@ -3,17 +3,19 @@ import {
   Terminal, RefreshCw, Filter, Search, Copy, ExternalLink,
   AlertCircle, CheckCircle, Clock, RotateCw, Trash2, ChevronDown, ChevronRight, Sparkles, ArrowLeft
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 
 const POLL_INTERVAL_MS = 2000;
 
 function PromptConsole() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const projectIdParam = searchParams.get('projectId');
   const [prompts, setPrompts] = useState([]);
   const [stats, setStats] = useState(null);
   const [projects, setProjects] = useState([]);
-  const [filterProject, setFilterProject] = useState('all');
+  const [filterProject, setFilterProject] = useState(projectIdParam || 'all');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterJob, setFilterJob] = useState('all');
   const [search, setSearch] = useState('');
@@ -176,7 +178,13 @@ function PromptConsole() {
     <div className="p-8 max-w-[1400px] mx-auto">
       {/* Back button */}
       <button
-        onClick={() => navigate(-1)}
+        onClick={() => {
+          if (projectIdParam) {
+            navigate(`/project/${projectIdParam}`);
+          } else {
+            navigate(-1);
+          }
+        }}
         className="neo-btn-ghost flex items-center gap-1.5 px-3 py-1.5 text-[11px] mb-4"
         title="Go back to previous page"
       >
@@ -338,12 +346,13 @@ function PromptConsole() {
               >
                 {isOpen ? <ChevronDown className="h-3.5 w-3.5 text-[#9AA0A6]" /> : <ChevronRight className="h-3.5 w-3.5 text-[#9AA0A6]" />}
                 <span className="text-[11px] font-mono text-[#9AA0A6] w-8">#{p.id}</span>
-                <span className="text-[11px] font-bold text-[#C6F11D] w-16">Scene {p.scene_number}</span>
+                <span className="text-[11px] font-bold text-[#C6F11D] w-36">
+                  Video #{p.video_index !== undefined && p.video_index !== null ? p.video_index + 1 : '?'} • Scene {p.scene_number}
+                </span>
                 {getStatusBadge(p.status)}
                 <span className="text-[11px] text-[#9AA0A6] flex-1 truncate">
                   {p.sanitized_visual_description || p.raw_visual_description || '(no description)'}
                 </span>
-                <span className="text-[10px] text-[#5F6772]">Job #{p.job_id || '-'}</span>
                 <span className="text-[10px] text-[#5F6772]">{getProjectName(p.project_id)}</span>
                 <span className="text-[10px] text-[#5F6772] w-16 text-right">{formatTime(p.created_at)}</span>
               </button>
@@ -435,6 +444,10 @@ function PromptConsole() {
                     <div>
                       <div className="text-[#5F6772] uppercase tracking-wider">Duration</div>
                       <div className="text-[#F5F5F5] font-mono mt-0.5">{p.duration_seconds ?? '-'}s</div>
+                    </div>
+                    <div>
+                      <div className="text-[#5F6772] uppercase tracking-wider">Job ID</div>
+                      <div className="text-[#F5F5F5] font-mono mt-0.5">#{p.job_id || '-'}</div>
                     </div>
                     <div>
                       <div className="text-[#5F6772] uppercase tracking-wider">Created</div>

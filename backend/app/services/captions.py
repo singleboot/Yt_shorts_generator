@@ -49,12 +49,25 @@ def hex_to_ass_stroke(hex_color: str) -> str:
     return hex_to_ass_color(hex_color)
 
 
+def hex_to_ass_bg_color(hex_color: str, opacity: float) -> str:
+    """Convert hex color (#RRGGBB) and opacity (0.0 to 1.0) to ASS &HAABBGGRR format."""
+    hex_color = hex_color.lstrip("#")
+    if len(hex_color) != 6:
+        # Fallback to 80% transparent black
+        return "&HCC000000"
+    r, g, b = hex_color[0:2], hex_color[2:4], hex_color[4:6]
+    alpha = int(round((1.0 - opacity) * 255))
+    alpha = max(0, min(255, alpha))
+    return f"&H{alpha:02X}{b}{g}{r}".upper()
+
+
 def generate_ass_subtitles(
     scenes: List[Dict],
     audio_assets: List[Dict],
     caption_settings: Dict,
     output_path: Path,
     transition_duration: float = 0.0,
+    scene_clips: List[Path] = None,
 ) -> Path:
     """Generate .ass subtitle file with word-by-word animation.
 
@@ -73,20 +86,62 @@ def generate_ass_subtitles(
     """
     # Caption settings
     font = caption_settings.get("font", "Impact")
-    # Scale font_size by output height (the captions.py default of 52 is
-    # tuned for 1280px-tall vertical video). For horizontal 1280x720 a
-    # 52px caption becomes 7% of the screen — way too big. For HD
-    # 1920x1080 the same 52px is fine. We compute the scale and clamp
-    # to a sensible range.
     base_height = caption_settings.get("base_resolution_height", 1280)
-    raw_size = caption_settings.get("font_size", 52)
+    raw_size = caption_settings.get("font_size", 96)
     scaled_size = int(round(raw_size * (base_height / 1280.0)))
-    font_size = max(20, min(96, scaled_size))
+    font_size = max(20, min(300, scaled_size))
     color = hex_to_ass_color(caption_settings.get("color", "#FFD700"))
     stroke_color = hex_to_ass_stroke(caption_settings.get("stroke_color", "#000000"))
     stroke_width = caption_settings.get("stroke_width", 3)
     animation = caption_settings.get("animation", "word_by_word")
-    bold = -1 if caption_settings.get("style", "").startswith("bold") else 0
+    all_caps = caption_settings.get("all_caps", False)
+
+    box_color_hex = caption_settings.get("box_color", "#000000")
+    box_opacity = float(caption_settings.get("box_opacity", 0.8) if caption_settings.get("box_opacity") is not None else 0.8)
+    box_shape = caption_settings.get("box_shape", "rectangle")
+
+    back_color = hex_to_ass_bg_color(box_color_hex, box_opacity)
+    underline = -1 if box_shape == "underline" else 0
+
+    # Caption style configuration
+    style = caption_settings.get("style", "standard")
+    
+    # 1. Bold setting
+    bold = -1 if (style == "bold" or caption_settings.get("style", "").startswith("bold")) else 0
+    
+    # 2. Border Style: 3 is opaque background box, 1 is standard outline
+    border_style = 3 if (style == "boxed" or caption_settings.get("boxed", False)) else 1
+    
+    # 3. Outline width: thin for minimal, custom otherwise. For boxed style (border_style=3),
+    # we need a positive outline width to render the background box.
+    if border_style == 3:
+        outline_width = max(3, stroke_width)
+    else:
+        outline_width = min(1, stroke_width) if style == "minimal" else stroke_width
+    
+    # 4. Shadow offset: none for minimal/boxed, 2 otherwise
+    shadow_offset = 0 if (style in ("minimal", "boxed") or caption_settings.get("boxed", False)) else 2
+    
+    # 5. Colors mapping
+    # For karaoke, PrimaryColour is active color, SecondaryColour is inactive base (white/grey).
+    # For typewriter, SecondaryColour is transparent (&HFFFFFFFF).
+    primary_color = color
+    secondary_color = "&H00FFFFFF"
+    if animation == "typewriter":
+        secondary_color = "&HFFFFFFFF"
+    elif style == "karaoke" or animation == "karaoke":
+        secondary_color = "&H00FFFFFF"
+
+    # 6. Alignment & Position mapping (Standard ASS layout)
+    position = caption_settings.get("position", "middle")
+    alignment = 5  # Always anchor to the middle-center of the pos coordinate box
+    x_pos = 540
+    if position == "top":
+        y_pos = 380
+    elif position == "bottom":
+        y_pos = 1540
+    else:  # middle
+        y_pos = 960
 
     # ASS Header
     ass_content = f"""[Script Info]
@@ -99,7 +154,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font},{font_size},{color},&H000000FF,{stroke_color},&H80000000,{bold},0,0,0,100,100,0,0,1,{stroke_width},2,2,80,80,500,1
+Style: Default,{font},{font_size},{primary_color},{secondary_color},{stroke_color},{back_color},{bold},0,{underline},0,100,100,0,0,{border_style},{outline_width},{shadow_offset},{alignment},80,80,10,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -109,45 +164,116 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     current_time = 0.0
     for i, scene in enumerate(scenes):
         narration = scene.get("narration_text", "")
+        if all_caps:
+            narration = narration.upper()
         if not narration:
             continue
 
-        # Get audio duration for this scene
+        # Speech duration is the actual voiceover audio duration (unpadded)
         audio_path = None
         if i < len(audio_assets) and audio_assets[i].get("local_path"):
             audio_path = Path(audio_assets[i]["local_path"])
         if audio_path and audio_path.exists():
-            audio_duration = get_audio_duration(audio_path)
+            speech_duration = get_audio_duration(audio_path)
         else:
-            audio_duration = scene.get("duration_seconds", 5)
+            speech_duration = float(scene.get("duration_seconds", 6) or 6)
 
-        if animation == "word_by_word":
-            timings = words_with_timings(narration, audio_duration)
+        scene_duration = float(scene.get("duration_seconds", 6) or 6)
+        if scene_clips and i < len(scene_clips) and scene_clips[i] and Path(scene_clips[i]).exists():
+            try:
+                actual_vid_dur = get_audio_duration(Path(scene_clips[i]))
+                if actual_vid_dur > 0:
+                    scene_duration = actual_vid_dur
+            except Exception:
+                pass
+        speech_duration = min(speech_duration, scene_duration)
+
+        # Check if sidecar JSON exists
+        json_path = audio_path.with_suffix(".json") if audio_path else None
+        precise_timings = None
+        if json_path and json_path.exists():
+            try:
+                import json as _json
+                with open(str(json_path), "r", encoding="utf-8") as jf:
+                    precise_timings = _json.load(jf)
+                if not isinstance(precise_timings, list) or not precise_timings:
+                    precise_timings = None
+            except Exception as je:
+                print(f"Failed to read sidecar JSON {json_path}: {je}")
+                precise_timings = None
+
+        if precise_timings is not None:
+            timings = []
+            for item in precise_timings:
+                w_start = min(float(item.get("start", 0.0)), speech_duration)
+                w_end = min(float(item.get("end", 0.0)), speech_duration)
+                word = item.get("word", "")
+                if all_caps:
+                    word = word.upper()
+                timings.append({"word": word, "start": w_start, "end": w_end})
+        else:
+            timings = words_with_timings(narration, speech_duration)
+
+        # Apply different animation logic
+        if animation in ("word_by_word", "pop") or (animation == "fade" and style not in ("karaoke", "boxed")):
             for timing in timings:
                 start_ts = format_ass_time(current_time + timing["start"])
                 end_ts = format_ass_time(current_time + timing["end"])
                 word = timing["word"].replace("\n", " ")
-                # Pop-in animation: scale up briefly
-                effect = "{\\fscx110\\fscy110\\t(0,80,\\fscx100\\fscy100)}"
-                ass_content += f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,{effect}{word}\n"
+                
+                # Apply word effect
+                if animation == "pop":
+                    effect = "{\\fscx120\\fscy120\\t(0,100,\\fscx100\\fscy100)}"
+                elif animation == "fade":
+                    effect = "{\\fad(80,80)}"
+                else:
+                    effect = "{\\fscx110\\fscy110\\t(0,80,\\fscx100\\fscy100)}"
+                ass_content += f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,{{\\pos({x_pos},{y_pos})}}{effect}{word}\n"
+        elif style == "karaoke" or animation in ("karaoke", "typewriter"):
+            # Karaoke / Typewriter highlighting
+            if timings:
+                dialogue_text = ""
+                prev_end = 0.0
+                for timing in timings:
+                    w_start = timing["start"]
+                    w_end = timing["end"]
+                    word = timing["word"].replace("\n", " ")
+                    gap = w_start - prev_end
+                    if gap > 0.01:
+                        gap_cs = int(round(gap * 100))
+                        dialogue_text += f"{{\\K{gap_cs}}}"
+                    dur_cs = int(round((w_end - w_start) * 100))
+                    dur_cs = max(1, dur_cs)
+                    dialogue_text += f"{{\\K{dur_cs}}}{word} "
+                    prev_end = w_end
+                
+                start_ts = format_ass_time(current_time)
+                end_ts = format_ass_time(current_time + speech_duration)
+                fade_prefix = "\\fad(200,200)" if animation == "fade" else ""
+                # Mux pos tag and fade prefix inside one tag block
+                tag_block = f"\\pos({x_pos},{y_pos})"
+                if fade_prefix:
+                    tag_block += f"|{fade_prefix}"
+                tag_block = "{" + tag_block.replace("|", "") + "}"
+                ass_content += f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,{tag_block}{dialogue_text.strip()}\n"
         else:
             # Static caption - show whole line for duration
             start_ts = format_ass_time(current_time)
-            end_ts = format_ass_time(current_time + audio_duration)
+            end_ts = format_ass_time(current_time + speech_duration)
             text = narration.replace("\n", " ")
-            ass_content += f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,{text}\n"
+            fade_prefix = "\\fad(200,200)" if animation == "fade" else ""
+            tag_block = f"\\pos({x_pos},{y_pos})"
+            if fade_prefix:
+                tag_block += f"|{fade_prefix}"
+            tag_block = "{" + tag_block.replace("|", "") + "}"
+            ass_content += f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,{tag_block}{text}\n"
 
-        # Advance the timeline. With transitions, each scene's audio
-        # actually starts `i * transition_duration` earlier in the output
-        # video (the previous scene's tail overlaps with this scene's head).
-        # Subtitles need to be on the same timeline as the video, so the
-        # last scene does NOT subtract a transition (no scene after it to
-        # overlap with). Hard-cut projects pass transition_duration=0 so
-        # this reduces to the original behavior.
+        # Advance the timeline by the scene's visual duration instead of the audio file's duration.
+        # This keeps the subtitles aligned with the scene cuts.
         if i < len(scenes) - 1:
-            current_time += max(0.0, audio_duration - transition_duration)
+            current_time += max(0.0, scene_duration - transition_duration)
         else:
-            current_time += audio_duration
+            current_time += scene_duration
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)

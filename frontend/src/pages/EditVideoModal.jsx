@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Sparkles, RotateCcw, Volume2, Play, Square, Film, Layers, RefreshCw, AlertCircle, CheckCircle, RotateCw as Spinner, Pencil, Eye, EyeOff, Wand2 } from 'lucide-react';
-import { AI_STYLES, VOICES, MUSIC_GENRES } from '../constants/production';
+import { X, Sparkles, RotateCcw, Volume2, Play, Square, Film, Layers, RefreshCw, AlertCircle, CheckCircle, RotateCw as Spinner, Pencil, Eye, EyeOff, Wand2, Youtube, Calendar, Globe } from 'lucide-react';
+import { AI_STYLES, VOICES, MUSIC_GENRES, CAPTION_PRESETS } from '../constants/production';
+
 import api from '../api/client';
 
 function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReassemble }) {
@@ -16,7 +17,212 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
   const [previewPlaying, setPreviewPlaying] = useState(null);
 
   // Tab state
-  const [tab, setTab] = useState('settings'); // 'settings' | 'scenes'
+  const [tab, setTab] = useState('settings'); // 'settings' | 'scenes' | 'seo' | 'captions'
+
+  // Caption Styling states
+  const cs = project.caption_settings || {};
+  const [captionStyle, setCaptionStyle] = useState(cs.style || 'standard');
+  const [captionFont, setCaptionFont] = useState(cs.font || 'Impact');
+  const [captionFontSize, setCaptionFontSize] = useState(cs.font_size || 96);
+  const [captionColor, setCaptionColor] = useState(cs.color || '#FFE600');
+  const [captionStrokeColor, setCaptionStrokeColor] = useState(cs.stroke_color || '#000000');
+  const [captionStrokeWidth, setCaptionStrokeWidth] = useState(cs.stroke_width || 4);
+  const [captionAnimation, setCaptionAnimation] = useState(cs.animation || 'pop');
+  const [captionPosition, setCaptionPosition] = useState(cs.position || 'middle');
+  const [captionAllCaps, setCaptionAllCaps] = useState(cs.all_caps || false);
+  const [captionBoxed, setCaptionBoxed] = useState(cs.boxed || false);
+  const [captionBoxColor, setCaptionBoxColor] = useState(cs.box_color || '#000000');
+  const [captionBoxOpacity, setCaptionBoxOpacity] = useState(cs.box_opacity ?? 0.8);
+  const [captionBoxShape, setCaptionBoxShape] = useState(cs.box_shape || 'rectangle');
+  const [savingCaptions, setSavingCaptions] = useState(false);
+
+  const [customPresets, setCustomPresets] = useState(() => {
+    try {
+      const saved = localStorage.getItem('custom_caption_presets');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      console.error(e);
+      return [];
+    }
+  });
+
+  const handleSaveCustomPreset = () => {
+    const name = window.prompt("Enter a name for your custom caption preset:", "My Preset");
+    if (!name || !name.trim()) return;
+
+    const newPreset = {
+      id: 'custom_' + Date.now(),
+      name: name.trim(),
+      font: captionFont,
+      style: captionStyle,
+      color: captionColor,
+      strokeColor: captionStrokeColor,
+      strokeWidth: captionStrokeWidth,
+      size: captionFontSize,
+      animation: captionAnimation,
+      allCaps: captionAllCaps,
+      boxed: captionBoxed,
+      boxColor: captionBoxColor,
+      boxOpacity: captionBoxOpacity,
+      boxShape: captionBoxShape,
+      isCustom: true
+    };
+
+    const updated = [...customPresets, newPreset];
+    setCustomPresets(updated);
+    localStorage.setItem('custom_caption_presets', JSON.stringify(updated));
+  };
+
+  const handleDeleteCustomPreset = (id, e) => {
+    e.stopPropagation();
+    if (!window.confirm("Delete this custom preset?")) return;
+    const updated = customPresets.filter(p => p.id !== id);
+    setCustomPresets(updated);
+    localStorage.setItem('custom_caption_presets', JSON.stringify(updated));
+  };
+
+  // SEO & Upload state
+  const [uploadRecord, setUploadRecord] = useState(video.upload || null);
+  const [seoTitle, setSeoTitle] = useState('');
+  const [seoDescription, setSeoDescription] = useState('');
+  const [seoTags, setSeoTags] = useState('');
+  const [scheduledFor, setScheduledFor] = useState('');
+  const [seoLoading, setSeoLoading] = useState(false);
+  const [seoSaving, setSeoSaving] = useState(false);
+  const [uploadingNow, setUploadingNow] = useState(false);
+  const [regeneratingSeo, setRegeneratingSeo] = useState(false);
+  const [seoMsg, setSeoMsg] = useState({ type: '', text: '' });
+
+  useEffect(() => {
+    if (tab === 'seo') {
+      loadUploadDetails();
+    }
+  }, [tab, video.upload?.id]);
+
+  const loadUploadDetails = async () => {
+    const uploadId = uploadRecord?.id || video.upload?.id;
+    if (!uploadId) return;
+    setSeoLoading(true);
+    try {
+      const res = await api.get(`/uploads/${uploadId}`);
+      if (res.data) {
+        setUploadRecord(res.data);
+        setSeoTitle(res.data.title || '');
+        setSeoDescription(res.data.description || '');
+        setSeoTags(res.data.tags || '');
+        
+        if (res.data.scheduled_for) {
+          const date = new Date(res.data.scheduled_for);
+          const tzOffset = date.getTimezoneOffset() * 60000;
+          const localISOTime = new Date(date.getTime() - tzOffset).toISOString().slice(0, 16);
+          setScheduledFor(localISOTime);
+        } else {
+          setScheduledFor('');
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load upload record:", e);
+      setSeoMsg({ type: 'error', text: 'Failed to load SEO metadata' });
+    } finally {
+      setSeoLoading(false);
+    }
+  };
+
+  const handleCreateUploadDraft = async () => {
+    setSeoLoading(true);
+    setSeoMsg({ type: 'info', text: 'Generating draft SEO metadata...' });
+    try {
+      const res = await api.post(`/projects/${project.id}/videos/${video.index}/upload`, null, {
+        params: { auto_queue: false }
+      });
+      if (res.data?.upload_id) {
+        setSeoMsg({ type: 'success', text: 'SEO Draft Created successfully!' });
+        setUploadRecord({ id: res.data.upload_id });
+        setTimeout(() => {
+          loadUploadDetails();
+        }, 100);
+      } else {
+        setSeoMsg({ type: 'error', text: res.data?.message || 'Failed to create SEO draft' });
+      }
+    } catch (e) {
+      setSeoMsg({ type: 'error', text: e?.response?.data?.detail || e.message || 'Draft creation failed' });
+    } finally {
+      setSeoLoading(false);
+    }
+  };
+
+  const handleSaveSeo = async () => {
+    const uploadId = uploadRecord?.id || video.upload?.id;
+    if (!uploadId) return;
+    setSeoSaving(true);
+    setSeoMsg({ type: '', text: '' });
+    try {
+      const payload = {
+        title: seoTitle.trim(),
+        description: seoDescription.trim(),
+        tags: seoTags.trim(),
+        scheduled_for: scheduledFor ? new Date(scheduledFor).toISOString() : null
+      };
+      const res = await api.put(`/uploads/${uploadId}/schedule`, payload);
+      if (res.data?.status === 'updated') {
+        setSeoMsg({ type: 'success', text: 'SEO settings saved!' });
+        loadUploadDetails();
+      } else {
+        setSeoMsg({ type: 'error', text: 'Failed to update schedule/metadata' });
+      }
+    } catch (e) {
+      setSeoMsg({ type: 'error', text: e?.response?.data?.detail || e.message || 'Failed to save SEO' });
+    } finally {
+      setSeoSaving(false);
+    }
+  };
+
+  const handleRegenSeo = async () => {
+    const scriptId = video.script?.id;
+    if (!scriptId) {
+      alert("No script ID found for this video. Generate script first.");
+      return;
+    }
+    setRegeneratingSeo(true);
+    setSeoMsg({ type: 'info', text: 'Regenerating SEO using AI...' });
+    try {
+      const res = await api.post(`/scripts/${scriptId}/seo`);
+      if (res.data?.status === 'success' && res.data.seo) {
+        const newSeo = res.data.seo;
+        setSeoTitle(newSeo.title || '');
+        setSeoDescription(newSeo.description || '');
+        setSeoTags(newSeo.hashtags ? newSeo.hashtags.join(', ') : '');
+        setSeoMsg({ type: 'success', text: 'Regenerated fresh SEO! Review and click Save.' });
+      } else {
+        setSeoMsg({ type: 'error', text: 'Failed to generate SEO metadata' });
+      }
+    } catch (e) {
+      setSeoMsg({ type: 'error', text: e?.response?.data?.detail || e.message || 'AI generation failed' });
+    } finally {
+      setRegeneratingSeo(false);
+    }
+  };
+
+  const handleUploadNow = async () => {
+    const uploadId = uploadRecord?.id || video.upload?.id;
+    if (!uploadId) return;
+    if (!window.confirm("Are you sure you want to upload this video to YouTube immediately?")) return;
+    setUploadingNow(true);
+    setSeoMsg({ type: 'info', text: 'Uploading to YouTube... please wait, this may take a moment.' });
+    try {
+      const res = await api.post(`/uploads/${uploadId}/now`);
+      if (res.data?.status === 'success') {
+        setSeoMsg({ type: 'success', text: `Successfully uploaded! YouTube ID: ${res.data.video_id}` });
+        loadUploadDetails();
+      } else {
+        setSeoMsg({ type: 'error', text: res.data?.message || 'Upload failed' });
+      }
+    } catch (e) {
+      setSeoMsg({ type: 'error', text: e?.response?.data?.detail || e.message || 'Upload failed' });
+    } finally {
+      setUploadingNow(false);
+    }
+  };
 
   // Scene state
   const [scenes, setScenes] = useState([]);
@@ -24,10 +230,8 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
   const [sceneRegenStatus, setSceneRegenStatus] = useState({}); // {scene_index: 'regenerating' | 'failed' | 'completed'}
   const [reassembleStatus, setReassembleStatus] = useState(null); // null | 'running' | 'completed' | 'failed'
   const [reassembleMsg, setReassembleMsg] = useState('');
-  // Per-scene prompt editor state
-  // promptEdits[sceneIndex] = { text, expanded, useCustom, dirty }
   const [promptEdits, setPromptEdits] = useState({});
-  const [tweakingAll, setTweakingAll] = useState(false); // global "edit all prompts" mode
+  const [tweakingAll, setTweakingAll] = useState(false);
 
   const togglePreview = (type, id) => {
     const key = `${type}:${id}`;
@@ -36,7 +240,7 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
       setPreviewPlaying(null);
       return;
     }
-    const BASE = 'http://127.0.0.1:8002';
+    const BASE = '';
     const url = type === 'voice'
       ? `${BASE}/settings/preview-voice?voice_id=${id}`
       : `${BASE}/settings/preview-music/${id}`;
@@ -52,7 +256,6 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
     if (tab === 'scenes' && scenes.length === 0) {
       loadScenes();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
   // Poll for scene regen / reassemble completion
@@ -64,17 +267,15 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
         const res = await api.get(`/projects/${project.id}/videos/${video.index}/scenes`);
         const fresh = res.data || [];
         setScenes(fresh);
-        // Re-check status by looking for any scene without a clip
         const next = {};
         fresh.forEach(s => { next[s.scene_index] = s.has_clip ? 'completed' : 'regenerating'; });
         setSceneRegenStatus(next);
         if (reassembleStatus === 'running') {
-          // Reassemble is synchronous on backend, so if we get here, it's done
           setReassembleStatus('completed');
           setReassembleMsg('Final video rebuilt');
         }
       } catch (e) {
-        // Ignore transient errors
+        // Ignore
       }
     }, 3000);
     return () => clearInterval(id);
@@ -106,7 +307,6 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
       );
       if (res.data?.status === 'success') {
         setSceneRegenStatus(prev => ({ ...prev, [sceneIndex]: 'completed' }));
-        // Mark this scene's edit as no-longer-dirty
         setPromptEdits(prev => {
           const next = { ...prev };
           if (next[sceneIndex]) {
@@ -114,9 +314,7 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
           }
           return next;
         });
-        // Reload scene list
         await loadScenes();
-        // Notify parent so it can refresh project state
         if (onSceneRegen) onSceneRegen(video.index, sceneIndex);
       } else {
         setSceneRegenStatus(prev => ({ ...prev, [sceneIndex]: 'failed' }));
@@ -128,27 +326,59 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
   };
 
   const setPromptEdit = (sceneIndex, partial) => {
-    setPromptEdits(prev => ({
-      ...prev,
-      [sceneIndex]: {
-        text: partial.text !== undefined ? partial.text : (prev[sceneIndex]?.text ?? ''),
-        expanded: partial.expanded !== undefined ? partial.expanded : (prev[sceneIndex]?.expanded ?? false),
-        useCustom: partial.useCustom !== undefined ? partial.useCustom : (prev[sceneIndex]?.useCustom ?? false),
-        dirty: partial.dirty !== undefined ? partial.dirty : (prev[sceneIndex]?.dirty ?? false),
-      },
-    }));
+    setPromptEdits(prev => {
+      const current = prev[sceneIndex] || {};
+      const newText = partial.text !== undefined ? partial.text : (current.text ?? '');
+      const newNarration = partial.narration !== undefined ? partial.narration : (current.narration ?? '');
+      const isDirty = partial.dirty !== undefined ? partial.dirty : (partial.text !== undefined || partial.narration !== undefined);
+      return {
+        ...prev,
+        [sceneIndex]: {
+          text: newText,
+          narration: newNarration,
+          expanded: partial.expanded !== undefined ? partial.expanded : (current.expanded ?? false),
+          useCustom: partial.useCustom !== undefined ? partial.useCustom : (current.useCustom ?? false),
+          dirty: isDirty,
+        }
+      };
+    });
   };
 
-  const resetPromptEdit = (sceneIndex, original) => {
+  const resetPromptEdit = (sceneIndex, original, originalNarration) => {
     setPromptEdits(prev => ({
       ...prev,
       [sceneIndex]: {
         text: original,
+        narration: originalNarration,
         expanded: prev[sceneIndex]?.expanded ?? false,
         useCustom: false,
         dirty: false,
       },
     }));
+  };
+
+  const handleSaveSceneEdits = async (sceneIndex) => {
+    const edit = promptEdits[sceneIndex];
+    if (!edit) return;
+    try {
+      const payload = {
+        visual_description: edit.text,
+        narration: edit.narration
+      };
+      const res = await api.put(`/projects/${project.id}/videos/${video.index}/scenes/${sceneIndex}`, payload);
+      if (res.data?.status === 'success') {
+        setScenes(prev => prev.map(s => s.scene_index === sceneIndex ? {
+          ...s,
+          visual_description: edit.text,
+          narration: edit.narration,
+          has_clip: s.has_clip
+        } : s));
+        setPromptEdit(sceneIndex, { dirty: false });
+        alert('Scene updates saved! Stale voiceovers have been cleared. Click "Re-assemble Final" below to rebuild the video.');
+      }
+    } catch (e) {
+      alert('Failed to save scene changes: ' + (e?.response?.data?.detail || e.message));
+    }
   };
 
   const handleReassemble = async () => {
@@ -167,6 +397,46 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
     } catch (e) {
       setReassembleStatus('failed');
       setReassembleMsg(e?.response?.data?.detail || e.message || 'Reassembly failed');
+    }
+  };
+
+  const handleSaveCaptionsAndReassemble = async () => {
+    setSavingCaptions(true);
+    setReassembleStatus('running');
+    setReassembleMsg('Saving caption style and re-assembling video...');
+    try {
+      const payload = {
+        caption_settings: {
+          style: captionStyle,
+          font: captionFont,
+          font_size: captionFontSize,
+          color: captionColor,
+          stroke_color: captionStrokeColor,
+          stroke_width: captionStrokeWidth,
+          animation: captionAnimation,
+          position: captionPosition,
+          all_caps: captionAllCaps,
+          boxed: captionBoxed,
+          box_color: captionBoxColor,
+          box_opacity: captionBoxOpacity,
+          box_shape: captionBoxShape,
+        }
+      };
+      await api.put(`/projects/${project.id}`, payload);
+      const res = await api.post(`/projects/${project.id}/videos/${video.index}/reassemble`);
+      if (res.data?.status === 'success') {
+        setReassembleStatus('completed');
+        setReassembleMsg('Video successfully re-assembled with new captions!');
+        if (onReassemble) onReassemble(video.index);
+      } else {
+        setReassembleStatus('failed');
+        setReassembleMsg(res.data?.message || 'Reassembly failed');
+      }
+    } catch (e) {
+      setReassembleStatus('failed');
+      setReassembleMsg(e?.response?.data?.detail || e.message || 'Reassembly failed');
+    } finally {
+      setSavingCaptions(false);
     }
   };
 
@@ -190,46 +460,415 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#050608]/90" onClick={onClose}>
       <div
-        className="neo-card w-full max-w-2xl max-h-[85vh] overflow-y-auto"
+        className="neo-card w-full max-w-5xl max-h-[90vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-[#252A33]">
+        <div className="flex items-center justify-between p-6 border-b border-[#252A33]">
           <div>
-            <h2 className="text-lg font-bold text-[#F5F5F5]">Edit Video {video.index + 1}</h2>
-            <p className="text-xs text-[#9AA0A6] mt-0.5">{tab === 'settings' ? 'Changing settings will regenerate this video' : 'Regenerate individual scenes without redoing the whole video'}</p>
+            <h2 className="text-xl font-bold text-[#F5F5F5]">Edit Video {video.index + 1}</h2>
+            <p className="text-sm text-[#9AA0A6] mt-1">{tab === 'settings' ? 'Changing settings will regenerate this video' : tab === 'scenes' ? 'Regenerate individual scenes without redoing the whole video' : 'Configure YouTube titles, descriptions, and schedule settings'}</p>
           </div>
-          <button onClick={onClose} className="p-2 rounded-xl hover:bg-[rgba(255,255,255,0.03)] transition-colors">
-            <X className="h-4 w-4 text-[#9AA0A6]" />
+          <button onClick={onClose} className="p-2.5 rounded-xl hover:bg-[rgba(255,255,255,0.03)] transition-colors">
+            <X className="h-5 w-5 text-[#9AA0A6]" />
           </button>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-[#252A33] px-5">
+        <div className="flex border-b border-[#252A33] px-6">
           <button
             onClick={() => setTab('settings')}
-            className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
+            className={`flex items-center gap-2 px-4 py-3.5 text-[14.5px] font-semibold border-b-2 transition-colors ${
               tab === 'settings'
                 ? 'border-[#C6F11D] text-[#C6F11D]'
                 : 'border-transparent text-[#9AA0A6] hover:text-[#F5F5F5]'
             }`}
           >
-            <Sparkles className="h-3.5 w-3.5" />
+            <Sparkles className="h-4.5 w-4.5" />
             Settings
           </button>
           <button
             onClick={() => setTab('scenes')}
-            className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
+            className={`flex items-center gap-2 px-4 py-3.5 text-[14.5px] font-semibold border-b-2 transition-colors ${
               tab === 'scenes'
                 ? 'border-[#C6F11D] text-[#C6F11D]'
                 : 'border-transparent text-[#9AA0A6] hover:text-[#F5F5F5]'
             }`}
           >
-            <Film className="h-3.5 w-3.5" />
+            <Film className="h-4.5 w-4.5" />
             Scenes
-            {scenes.length > 0 && <span className="text-[10px] text-[#5F6772]">({scenes.length})</span>}
+            {scenes.length > 0 && <span className="text-[12px] text-[#5F6772]">({scenes.length})</span>}
+          </button>
+          <button
+            onClick={() => setTab('seo')}
+            className={`flex items-center gap-2 px-4 py-3.5 text-[14.5px] font-semibold border-b-2 transition-colors ${
+              tab === 'seo'
+                ? 'border-[#C6F11D] text-[#C6F11D]'
+                : 'border-transparent text-[#9AA0A6] hover:text-[#F5F5F5]'
+            }`}
+          >
+            <Youtube className="h-4.5 w-4.5" />
+            SEO & Upload
+          </button>
+          <button
+            onClick={() => setTab('captions')}
+            className={`flex items-center gap-2 px-4 py-3.5 text-[14.5px] font-semibold border-b-2 transition-colors ${
+              tab === 'captions'
+                ? 'border-[#C6F11D] text-[#C6F11D]'
+                : 'border-transparent text-[#9AA0A6] hover:text-[#F5F5F5]'
+            }`}
+          >
+            <Layers className="h-4.5 w-4.5" />
+            Captions
           </button>
         </div>
+
+        {/* CAPTIONS TAB */}
+        {tab === 'captions' && (
+          <div className="p-6 space-y-4 text-[16px]">
+            {/* Presets Row */}
+            <div>
+              <div className="flex justify-between items-center mb-2">
+                <h3 className="text-[16px] font-semibold text-[#F5F5F5]">Presets</h3>
+                <button
+                  type="button"
+                  onClick={handleSaveCustomPreset}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-semibold bg-[#252A33] hover:bg-[#343b47] text-[#F5F5F5] rounded border border-[#343b47] transition-all"
+                >
+                  <Sparkles className="h-3.5 w-3.5 text-[#C6F11D]" />
+                  Save as Preset
+                </button>
+              </div>
+              <div className="grid grid-cols-9 gap-1.5">
+                {[
+                  ...CAPTION_PRESETS,
+                  ...customPresets.map(cp => {
+                    const isBoxed = cp.style === 'boxed' || cp.boxed;
+                    let bgStyleColor = 'rgba(0,0,0,0.8)';
+                    if (cp.boxColor) {
+                      const hex = cp.boxColor.replace('#', '');
+                      const r = parseInt(hex.substring(0, 2), 16) || 0;
+                      const g = parseInt(hex.substring(2, 4), 16) || 0;
+                      const b = parseInt(hex.substring(4, 6), 16) || 0;
+                      bgStyleColor = `rgba(${r}, ${g}, ${b}, ${cp.boxOpacity ?? 0.8})`;
+                    }
+
+                    return {
+                      ...cp,
+                      bgPreview: isBoxed ? '' : 'bg-[#0E1116]',
+                      bgStyle: isBoxed ? { backgroundColor: bgStyleColor } : {},
+                      textStyle: {
+                        fontFamily: cp.font.replace(/-/g, ' '),
+                        color: cp.color,
+                        fontSize: '10.5px',
+                        fontWeight: 'bold',
+                        textShadow: cp.strokeWidth > 0 
+                          ? `-1px -1px 0 ${cp.strokeColor}, 1px -1px 0 ${cp.strokeColor}, -1px 1px 0 ${cp.strokeColor}, 1px 1px 0 ${cp.strokeColor}` 
+                          : 'none',
+                        borderRadius: cp.boxShape === 'underline' ? '0px' : '3px',
+                        borderBottom: cp.boxShape === 'underline' ? `2px solid ${cp.color}` : 'none',
+                        padding: isBoxed && cp.boxShape !== 'underline' ? '1px 3px' : '0px'
+                      },
+                      textLabel: cp.name.substring(0, 7)
+                    };
+                  })
+                ].map(preset => {
+                  const isSelected = captionStyle === preset.style &&
+                                     captionFont === preset.font &&
+                                     captionColor === preset.color &&
+                                     captionStrokeColor === preset.strokeColor &&
+                                     captionStrokeWidth === preset.strokeWidth &&
+                                     captionFontSize === preset.size &&
+                                     captionAnimation === preset.animation &&
+                                     captionAllCaps === (preset.allCaps ?? false) &&
+                                     captionBoxed === (preset.boxed ?? (preset.style === 'boxed'));
+
+                  return (
+                    <button
+                      type="button"
+                      key={preset.id}
+                      onClick={() => {
+                        setCaptionStyle(preset.style);
+                        setCaptionFont(preset.font);
+                        setCaptionColor(preset.color);
+                        setCaptionStrokeColor(preset.strokeColor);
+                        setCaptionStrokeWidth(preset.strokeWidth);
+                        setCaptionFontSize(preset.size);
+                        setCaptionAnimation(preset.animation);
+                        setCaptionAllCaps(preset.allCaps ?? false);
+                        setCaptionBoxed(preset.boxed ?? (preset.style === 'boxed'));
+                        setCaptionBoxColor(preset.boxColor || '#000000');
+                        setCaptionBoxOpacity(preset.boxOpacity ?? 0.8);
+                        setCaptionBoxShape(preset.boxShape || 'rectangle');
+                      }}
+                      className={`group relative flex flex-col items-center p-1 rounded border transition-all duration-200 text-center w-full ${
+                        isSelected 
+                          ? 'border-[#C6F11D] bg-[#C6F11D]/5' 
+                          : 'border-[#252A33] hover:border-[#9AA0A6]/30 bg-transparent'
+                      }`}
+                    >
+                      {preset.isCustom && (
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteCustomPreset(preset.id, e)}
+                          className="absolute -top-1 -right-1 bg-red-600 hover:bg-red-700 text-white rounded-full p-0.5 z-10 hidden group-hover:block transition-all"
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      )}
+                      
+                      <div 
+                        style={preset.bgStyle || {}} 
+                        className={`w-full h-8 rounded flex items-center justify-center mb-0.5 border border-[#252A33]/55 ${preset.bgPreview}`}
+                      >
+                        <span style={preset.textStyle}>
+                          {preset.textLabel}
+                        </span>
+                      </div>
+                      <span className="text-[11.5px] font-semibold truncate w-full text-[#F5F5F5]">
+                        {preset.name}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Customize Section */}
+            <div className="p-4 rounded-xl bg-[#0E1116] border border-[#252A33] space-y-4">
+              {/* Dropdowns Row (Style, Animation, Font) */}
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[13px] text-[#9AA0A6] block mb-1.5 font-bold uppercase tracking-wider">STYLE</label>
+                  <select
+                    value={captionStyle}
+                    onChange={(e) => {
+                      setCaptionStyle(e.target.value);
+                      if (e.target.value === 'boxed') setCaptionBoxed(true);
+                    }}
+                    className="w-full px-3 py-2 rounded bg-[#050608] border border-[#252A33] text-[15px] text-[#F5F5F5] outline-none"
+                  >
+                    <option value="standard">Standard</option>
+                    <option value="bold">Bold</option>
+                    <option value="minimal">Minimal</option>
+                    <option value="boxed">Boxed</option>
+                    <option value="karaoke">Karaoke</option>
+                    <option value="none">None (No Subtitles)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[13px] text-[#9AA0A6] block mb-1.5 font-bold uppercase tracking-wider">ANIMATION</label>
+                  <select
+                    value={captionAnimation}
+                    onChange={(e) => setCaptionAnimation(e.target.value)}
+                    className="w-full px-3 py-2 rounded bg-[#050608] border border-[#252A33] text-[15px] text-[#F5F5F5] outline-none"
+                  >
+                    <option value="none">None</option>
+                    <option value="word_by_word">Word</option>
+                    <option value="fade">Fade</option>
+                    <option value="pop">Pop</option>
+                    <option value="typewriter">Typewriter</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[13px] text-[#9AA0A6] block mb-1.5 font-bold uppercase tracking-wider">FONT FAMILY</label>
+                  <select
+                    value={captionFont}
+                    onChange={e => setCaptionFont(e.target.value)}
+                    className="w-full px-3 py-2 rounded bg-[#050608] border border-[#252A33] text-[15px] text-[#F5F5F5] outline-none"
+                  >
+                    {['Arial-Bold','Arial','Impact','Helvetica-Bold','Verdana-Bold','Trebuchet-MS','Comic-Sans-MS','Courier-New-Bold','Times-New-Roman-Bold','Georgia-Bold'].map(f => (
+                      <option key={f} value={f} className="bg-[#0E1116] text-[#F5F5F5]">{f}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Slider & Width / Stroke Controls */}
+              <div className="grid grid-cols-3 gap-3 items-center text-[15.5px]">
+                <div>
+                  <div className="flex items-center justify-between mb-0.5">
+                    <span className="text-[#9AA0A6] text-[13px] font-bold uppercase tracking-wider">SIZE</span>
+                    <input
+                      type="number"
+                      min="10"
+                      max="300"
+                      value={captionFontSize}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value);
+                        setCaptionFontSize(isNaN(val) ? 0 : val);
+                      }}
+                      onBlur={(e) => {
+                        const val = Math.max(10, Math.min(300, parseInt(e.target.value) || 96));
+                        setCaptionFontSize(val);
+                      }}
+                      className="w-14 px-2 py-1 bg-[#050608] border border-[#252A33] rounded text-[13px] text-[#F5F5F5] outline-none"
+                    />
+                  </div>
+                  <input
+                    type="range" min="10" max="300" step="1"
+                    value={captionFontSize}
+                    onChange={(e) => setCaptionFontSize(parseInt(e.target.value))}
+                    className="w-full accent-[#C6F11D] h-1.5"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-0.5">
+                    <span className="text-[#9AA0A6] text-[13px] font-bold uppercase tracking-wider">STROKE ({captionStrokeWidth}px)</span>
+                  </div>
+                  <input
+                    type="range" min="0" max="8" step="1"
+                    value={captionStrokeWidth}
+                    onChange={(e) => setCaptionStrokeWidth(parseInt(e.target.value))}
+                    className="w-full accent-[#C6F11D] h-1.5"
+                  />
+                </div>
+
+                <div>
+                  <span className="text-[#9AA0A6] text-[13px] block mb-0.5 font-bold uppercase tracking-wider">ALIGN</span>
+                  <select
+                    value={captionPosition}
+                    onChange={e => setCaptionPosition(e.target.value)}
+                    className="w-full px-3 py-2 rounded bg-[#050608] border border-[#252A33] text-[15px] text-[#F5F5F5] outline-none"
+                  >
+                    <option value="top">Top</option>
+                    <option value="middle">Middle</option>
+                    <option value="bottom">Bottom</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Combined Color Pickers Row - ALL IN ONE LINE, CAPS labels, 20% larger pickers & text */}
+              <div className="flex items-center gap-6 py-2.5 border-t border-[#252A33]/50 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className="text-[15px] text-[#9AA0A6] font-bold tracking-wider">TEXT:</span>
+                  <input
+                    type="color"
+                    value={captionColor}
+                    onChange={(e) => setCaptionColor(e.target.value)}
+                    className="w-[32px] h-[32px] rounded cursor-pointer border border-[#252A33] p-0 bg-transparent overflow-hidden"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[15px] text-[#9AA0A6] font-bold tracking-wider">STROKE:</span>
+                  <input
+                    type="color"
+                    value={captionStrokeColor}
+                    onChange={(e) => setCaptionStrokeColor(e.target.value)}
+                    className="w-[32px] h-[32px] rounded cursor-pointer border border-[#252A33] p-0 bg-transparent overflow-hidden"
+                  />
+                </div>
+
+                {captionBoxed && (
+                  <div className="flex items-center gap-2 animate-fadeIn">
+                    <span className="text-[15px] text-[#9AA0A6] font-bold tracking-wider">BOX:</span>
+                    <input
+                      type="color"
+                      value={captionBoxColor}
+                      onChange={(e) => setCaptionBoxColor(e.target.value)}
+                      className="w-[32px] h-[32px] rounded cursor-pointer border border-[#252A33] p-0 bg-transparent overflow-hidden"
+                    />
+                  </div>
+                )}
+
+                {captionBoxed && (
+                  <div className="flex flex-1 items-center gap-2 min-w-0 max-w-[175px]">
+                    <span className="text-[15px] text-[#9AA0A6] font-bold tracking-wider shrink-0">OPACITY:</span>
+                    <input
+                      type="range" min="0.1" max="1.0" step="0.05"
+                      value={captionBoxOpacity}
+                      onChange={(e) => setCaptionBoxOpacity(parseFloat(e.target.value))}
+                      className="w-full accent-[#C6F11D] h-1.5"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Toggles, Alignment, Box Shape (Inline Row) - 20% larger checkboxes & text */}
+              <div className="flex items-center justify-between gap-6 pt-2.5 border-t border-[#252A33]/50 flex-wrap">
+                <div className="flex items-center gap-6">
+                  {/* All Caps Checkbox */}
+                  <label className="flex items-center gap-2.5 cursor-pointer text-[15.5px] font-bold text-[#9AA0A6] hover:text-[#F5F5F5] select-none">
+                    <input
+                      type="checkbox"
+                      checked={captionAllCaps}
+                      onChange={(e) => setCaptionAllCaps(e.target.checked)}
+                      className="w-6 h-6 rounded border-[#252A33] bg-[#050608] text-[#C6F11D] accent-[#C6F11D] cursor-pointer"
+                    />
+                    ALL CAPS
+                  </label>
+
+                  {/* Boxed Checkbox */}
+                  <label className="flex items-center gap-2.5 cursor-pointer text-[15.5px] font-bold text-[#9AA0A6] hover:text-[#F5F5F5] select-none">
+                    <input
+                      type="checkbox"
+                      checked={captionBoxed}
+                      onChange={(e) => {
+                        setCaptionBoxed(e.target.checked);
+                        if (e.target.checked) {
+                          setCaptionStyle('boxed');
+                        } else if (captionStyle === 'boxed') {
+                          setCaptionStyle('standard');
+                        }
+                      }}
+                      className="w-6 h-6 rounded border-[#252A33] bg-[#050608] text-[#C6F11D] accent-[#C6F11D] cursor-pointer"
+                    />
+                    BOXED
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  {/* Box Shape */}
+                  {captionBoxed && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[13px] text-[#9AA0A6] font-bold uppercase tracking-wider">SHAPE:</span>
+                      <select
+                        value={captionBoxShape}
+                        onChange={e => setCaptionBoxShape(e.target.value)}
+                        className="px-2.5 py-1.5 rounded bg-[#050608] border border-[#252A33] text-[14px] text-[#F5F5F5] outline-none"
+                      >
+                        <option value="rectangle">Rectangle</option>
+                        <option value="underline">Underline</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Reassemble Status Feedback */}
+            {reassembleStatus && (
+              <div className={`p-2 rounded border text-[14px] flex items-center gap-2.5 ${
+                reassembleStatus === 'completed'
+                  ? 'bg-[rgba(107,255,100,0.06)] border-[rgba(107,255,100,0.3)] text-[#6BFF64]'
+                  : reassembleStatus === 'failed'
+                    ? 'bg-[rgba(255,87,87,0.06)] border-[rgba(255,87,87,0.3)] text-[#FF5757]'
+                    : 'bg-[rgba(198,241,29,0.06)] border-[rgba(198,241,29,0.3)] text-[#C6F11D]'
+              }`}>
+                {reassembleStatus === 'completed' && <CheckCircle className="h-4 w-4" />}
+                {reassembleStatus === 'failed' && <AlertCircle className="h-4 w-4" />}
+                {reassembleStatus === 'running' && <Spinner className="h-4 w-4 animate-spin" />}
+                <span>{reassembleMsg}</span>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                onClick={handleSaveCaptionsAndReassemble}
+                disabled={savingCaptions}
+                className="neo-btn-primary px-6 py-2.5 text-[16px] flex items-center gap-2.5"
+              >
+                {savingCaptions ? <Spinner className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                Save Caption & Re-assemble Video
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* SETTINGS TAB */}
         {tab === 'settings' && (
@@ -442,7 +1081,6 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
                   onClick={() => {
                     const next = !tweakingAll;
                     setTweakingAll(next);
-                    // Expand all editors with their current visual_description as default
                     const updated = { ...promptEdits };
                     scenes.forEach(s => {
                       if (!updated[s.scene_index]) {
@@ -548,20 +1186,20 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
                           </div>
                         )}
 
-                        {/* PROMPT EDITOR (collapsible) */}
+                        {/* PROMPT & CAPTION EDITOR */}
                         {isTweaking && (
-                          <div className="mt-3 space-y-2 rounded-xl border border-[#252A33] bg-[#0A0C10] p-3">
+                          <div className="mt-3 space-y-3 rounded-xl border border-[#252A33] bg-[#0A0C10] p-3">
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-1.5 text-[10px] font-semibold text-[#C6F11D]">
                                 <Wand2 className="h-3 w-3" />
-                                Tweak visual prompt
+                                Edit Scene Caption & Visuals
                               </div>
                               <div className="flex items-center gap-2">
                                 {isDirty && (
-                                  <span className="text-[9px] text-[#FFC845]">unsaved</span>
+                                  <span className="text-[9px] text-[#FFC845]">unsaved edits</span>
                                 )}
                                 <button
-                                  onClick={() => resetPromptEdit(s.scene_index, s.visual_description || '')}
+                                  onClick={() => resetPromptEdit(s.scene_index, s.visual_description || '', s.narration || '')}
                                   className="text-[10px] text-[#9AA0A6] hover:text-[#F5F5F5] flex items-center gap-1"
                                   title="Reset to original"
                                 >
@@ -569,36 +1207,41 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
                                 </button>
                               </div>
                             </div>
-                            <textarea
-                              value={effectiveText}
-                              onChange={e => setPromptEdit(s.scene_index, { text: e.target.value, dirty: e.target.value !== (s.visual_description || '') })}
-                              rows={4}
-                              className="w-full p-2 rounded-lg bg-[#050608] border border-[#252A33] text-[11px] text-[#F5F5F5] font-mono leading-relaxed outline-none focus:border-[#C6F11D]/50 transition-all resize-none"
-                              placeholder="Camera move of subject in setting, doing action, lighting, mood, style triggers..."
-                            />
-                            {s.trigger_words && (
-                              <div className="text-[9px] text-[#5F6772] leading-relaxed">
-                                <span className="text-[#C6F11D]">Auto-prepended triggers:</span> {s.trigger_words}
-                                <br />
-                                <span className="text-[#C6F11D]">Auto-appended suffix:</span> {s.suffix || '25fps, high quality, vertical 9:16...'}
-                                <br />
-                                <span className="text-[#5F6772]">Your text goes between the triggers and suffix.</span>
-                              </div>
-                            )}
-                            {s.final_prompt && (
-                              <details className="text-[9px] text-[#5F6772]">
-                                <summary className="cursor-pointer hover:text-[#9AA0A6]">Last sent to ComfyUI ({(s.final_prompt || '').length} chars)</summary>
-                                <div className="mt-1 p-2 bg-[#050608] rounded-lg font-mono leading-relaxed break-words whitespace-pre-wrap">
-                                  {s.final_prompt}
-                                </div>
-                              </details>
-                            )}
+
+                            <div className="space-y-1">
+                              <label className="text-[9px] text-[#9AA0A6] uppercase tracking-wider block font-semibold">Spoken Caption / Narration</label>
+                              <textarea
+                                value={edit?.narration ?? s.narration ?? ''}
+                                onChange={e => setPromptEdit(s.scene_index, { narration: e.target.value, dirty: true })}
+                                rows={2}
+                                className="w-full p-2 rounded-lg bg-[#050608] border border-[#252A33] text-[11px] text-[#F5F5F5] font-sans leading-relaxed outline-none focus:border-[#C6F11D]/50 transition-all resize-none"
+                                placeholder="What the voiceover says..."
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="text-[9px] text-[#9AA0A6] uppercase tracking-wider block font-semibold">Visual Prompt / Description</label>
+                              <textarea
+                                value={effectiveText}
+                                onChange={e => setPromptEdit(s.scene_index, { text: e.target.value, dirty: true })}
+                                rows={3}
+                                className="w-full p-2 rounded-lg bg-[#050608] border border-[#252A33] text-[11px] text-[#F5F5F5] font-mono leading-relaxed outline-none focus:border-[#C6F11D]/50 transition-all resize-none"
+                                placeholder="Camera move..."
+                              />
+                            </div>
+
+                            <button
+                              onClick={() => handleSaveSceneEdits(s.scene_index)}
+                              className="bg-[#C6F11D] text-[#050608] hover:bg-[#b5dc1a] font-bold rounded-lg w-full py-1.5 text-[10px] transition-all"
+                            >
+                              Save Caption & Visuals
+                            </button>
                           </div>
                         )}
                       </div>
                       <div className="flex flex-col gap-1.5 shrink-0">
                         <button
-                          onClick={() => setPromptEdit(s.scene_index, { expanded: !isTweaking })}
+                          onClick={() => setPromptEdit(s.scene_index, { expanded: !isTweaking, text: s.visual_description || '', narration: s.narration || '', dirty: false })}
                           className={`neo-btn-ghost flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] ${isTweaking ? 'border-[#C6F11D] text-[#C6F11D]' : ''}`}
                           title="Tweak visual prompt"
                         >
@@ -609,7 +1252,6 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
                           onClick={() => handleRegenScene(s.scene_index, isTweaking && isDirty ? effectiveText : null)}
                           disabled={isRegenerating}
                           className="neo-btn-ghost flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] disabled:opacity-50"
-                          title={isDirty ? 'Regenerate with tweaked prompt' : 'Regenerate with new seed'}
                         >
                           {isRegenerating ? (
                             <Spinner className="h-3 w-3 animate-spin" />
@@ -629,34 +1271,112 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
             <div className="flex items-center justify-between p-3 -mx-5 -mb-5 border-t border-[#252A33] bg-[#0A0C10]">
               <div className="flex items-center gap-2 text-[11px] text-[#9AA0A6]">
                 <Layers className="h-3.5 w-3.5" />
-                <span>After regenerating scenes, click below to rebuild the final video</span>
+                <span>After regenerating scenes, rebuild final video</span>
               </div>
               <div className="flex gap-2">
-                <button
-                  onClick={onClose}
-                  className="neo-btn-ghost px-3 py-1.5 text-xs"
-                >
-                  Close
-                </button>
+                <button onClick={onClose} className="neo-btn-ghost px-3 py-1.5 text-xs">Close</button>
                 <button
                   onClick={handleReassemble}
                   disabled={reassembleStatus === 'running'}
                   className="neo-btn-primary px-4 py-1.5 text-xs flex items-center gap-2"
                 >
                   {reassembleStatus === 'running' ? (
-                    <>
-                      <Spinner className="h-3 w-3 animate-spin" />
-                      Re-assembling...
-                    </>
+                    <Spinner className="h-3 w-3 animate-spin" />
                   ) : (
-                    <>
-                      <Layers className="h-3 w-3" />
-                      Re-assemble Final
-                    </>
+                    'Re-assemble Final'
                   )}
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* SEO TAB */}
+        {tab === 'seo' && (
+          <div className="p-5 space-y-4">
+            {seoMsg.text && (
+              <div className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-[11px] ${
+                seoMsg.type === 'success' ? 'bg-[rgba(107,255,100,0.06)] border-[rgba(107,255,100,0.3)] text-[#6BFF64]' : 'bg-[rgba(255,87,87,0.06)] border-[rgba(255,87,87,0.3)] text-[#FF5757]'
+              }`}>
+                <span>{seoMsg.text}</span>
+              </div>
+            )}
+            {!uploadRecord && !video.upload?.id ? (
+              <div className="text-center py-10 bg-[#0E1116] border border-[#252A33] rounded-2xl p-5">
+                <Youtube className="h-10 w-10 mx-auto text-[#FF0000] mb-3 opacity-60" />
+                <button
+                  onClick={handleCreateUploadDraft}
+                  disabled={seoLoading}
+                  className="neo-btn-primary px-5 py-2 text-xs flex items-center gap-2 mx-auto"
+                >
+                  Generate SEO Draft
+                </button>
+              </div>
+            ) : seoLoading ? (
+              <div className="text-center py-10">
+                <Spinner className="h-6 w-6 mx-auto animate-spin text-[#C6F11D]" />
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[11px] text-[#9AA0A6] block mb-1">YouTube Video Title</label>
+                  <input
+                    type="text"
+                    value={seoTitle}
+                    onChange={e => setSeoTitle(e.target.value)}
+                    className="w-full p-2.5 rounded-xl bg-[#0E1116] border border-[#252A33] text-xs text-[#F5F5F5] outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-[#9AA0A6] block mb-1">Video Description</label>
+                  <textarea
+                    value={seoDescription}
+                    onChange={e => setSeoDescription(e.target.value)}
+                    rows={4}
+                    className="w-full p-2.5 rounded-xl bg-[#0E1116] border border-[#252A33] text-xs text-[#F5F5F5] outline-none resize-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-[#9AA0A6] block mb-1">Tags / Hashtags</label>
+                  <input
+                    type="text"
+                    value={seoTags}
+                    onChange={e => setSeoTags(e.target.value)}
+                    className="w-full p-2.5 rounded-xl bg-[#0E1116] border border-[#252A33] text-xs text-[#F5F5F5] outline-none"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4 p-3 bg-[#131722]/50 border border-[#252A33]/50 rounded-xl">
+                  <div>
+                    <label className="text-[10px] text-[#9AA0A6] block mb-1">Scheduled Time</label>
+                    <input
+                      type="datetime-local"
+                      value={scheduledFor}
+                      onChange={e => setScheduledFor(e.target.value)}
+                      className="w-full p-2 rounded-lg bg-[#0E1116] border border-[#252A33] text-[11px] text-[#F5F5F5]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-[#9AA0A6] block mb-1">Status</label>
+                    <div className="text-xs font-semibold px-2 py-2.5 rounded-lg bg-[#0E1116] border border-[#252A33] text-[#F5F5F5]">
+                      {uploadRecord.status}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between pt-2 border-t border-[#252A33]">
+                  <button onClick={handleRegenSeo} disabled={regeneratingSeo} className="neo-btn-ghost px-3 py-1.5 text-xs">
+                    AI Regenerate SEO
+                  </button>
+                  <div className="flex gap-2">
+                    <button onClick={handleSaveSeo} disabled={seoSaving} className="neo-btn-ghost px-4 py-1.5 text-xs">
+                      Save & Schedule
+                    </button>
+                    <button onClick={handleUploadNow} disabled={uploadingNow} className="bg-[#FF0000] text-white rounded-xl px-4 py-1.5 text-xs">
+                      Upload Now
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
