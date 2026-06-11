@@ -739,6 +739,16 @@ function ProjectDetail() {
     }
   };
 
+  const handleForceStopAll = async () => {
+    try {
+      await api.post('/jobs/force-stop-all');
+      showToast('Force stopped: pipeline cleared, ComfyUI halted', 'warning');
+      loadProject();
+    } catch (e) {
+      showToast('Force stop failed — try restarting the backend', 'error');
+    }
+  };
+
   const saveProductionSettings = async () => {
     try {
       const newVS = {
@@ -2056,6 +2066,14 @@ function ProjectDetail() {
             >
               <Square className="h-3 w-3" />
               Cancel All
+            </button>
+            <button
+              onClick={handleForceStopAll}
+              title="Force Stop: use when generation is stuck. Clears ComfyUI queue and resets the pipeline."
+              className="neo-btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-[11px] border-orange-500 text-orange-400 hover:bg-orange-500/10"
+            >
+              <Square className="h-3 w-3 fill-orange-400" />
+              Force Stop
             </button>
             <button
               onClick={handleArchiveNow}

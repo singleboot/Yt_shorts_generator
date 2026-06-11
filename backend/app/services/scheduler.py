@@ -90,6 +90,17 @@ class SchedulerService:
             coalesce=True
         )
 
+        # Watchdog: detect jobs stuck in "running" with no progress for >45 min
+        self.scheduler.add_job(
+            self._watchdog_stuck_jobs,
+            "interval",
+            minutes=2,
+            id="stuck_job_watchdog",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True
+        )
+
         # Upload checker every 15 minutes
         self.scheduler.add_job(
             self._process_upload_queue,
@@ -99,6 +110,73 @@ class SchedulerService:
             replace_existing=True
         )
     
+    # Maximum time (minutes) a job may stay in "running" state without a
+    # DB commit before the watchdog declares it stuck and fails it.
+    STUCK_JOB_TIMEOUT_MINUTES = 45
+
+    def _watchdog_stuck_jobs(self):
+        """Detect and recover jobs that have been stuck in 'running' for too long.
+
+        A job is considered stuck when its started_at (or updated_at) is older
+        than STUCK_JOB_TIMEOUT_MINUTES without transitioning out of 'running'.
+        This handles:
+        - ComfyUI hanging in wait_for_completion (timeout=3600 s by default)
+        - Deadlocked asyncio.run / ThreadPoolExecutor calls
+        - Network errors that silently block
+        """
+        db = SessionLocal()
+        try:
+            cutoff = datetime.utcnow() - timedelta(minutes=self.STUCK_JOB_TIMEOUT_MINUTES)
+            stuck_jobs = db.query(models.Job).filter(
+                models.Job.status == "running",
+                models.Job.job_type.in_(["batch", "generate", "video"]),
+                models.Job.started_at < cutoff,
+            ).all()
+
+            if not stuck_jobs:
+                return
+
+            for job in stuck_jobs:
+                mins = int((datetime.utcnow() - job.started_at).total_seconds() / 60)
+                logging.warning(
+                    "[watchdog] Job %s (%s) has been running for %s min — marking failed",
+                    job.id, job.job_type, mins,
+                )
+                job.status = "failed"
+                job.logs = (job.logs or "") + (
+                    f"\n[watchdog] Job stuck for {mins} min — auto-failed. "
+                    "ComfyUI will be interrupted and the queue will resume."
+                )
+                db.commit()
+
+                # Interrupt ComfyUI and clear its queue so it doesn't keep rendering
+                try:
+                    import asyncio as _aio
+                    try:
+                        loop = _aio.get_event_loop()
+                        if loop.is_running():
+                            import concurrent.futures
+                            with concurrent.futures.ThreadPoolExecutor() as pool:
+                                pool.submit(_aio.run, visuals_service.comfyui.full_stop()).result(timeout=15)
+                        else:
+                            loop.run_until_complete(visuals_service.comfyui.full_stop())
+                    except RuntimeError:
+                        _aio.run(visuals_service.comfyui.full_stop())
+                except Exception as e:
+                    logging.warning("[watchdog] ComfyUI full_stop failed (non-fatal): %s", e)
+
+            db.commit()
+        except Exception as e:
+            logging.error("[watchdog] Error in watchdog: %s", e)
+        finally:
+            db.close()
+
+        # Immediately try to resume the queue after releasing stuck jobs
+        try:
+            self._process_job_queue()
+        except Exception:
+            pass
+
     def _daily_research_job(self):
         """Run research for all active projects with auto_generate enabled."""
         db = SessionLocal()
