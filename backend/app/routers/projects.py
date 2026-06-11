@@ -796,17 +796,47 @@ def trending_now(project_id: int, body: dict = {}, db: Session = Depends(get_db)
 
 @router.post("/{project_id}/cancel-all", response_model=dict)
 def cancel_all_project_jobs(project_id: int, db: Session = Depends(get_db)):
-    """Cancel all queued/running jobs for a project."""
+    """Cancel all queued/running jobs for a project and stop ComfyUI immediately."""
+    import asyncio as _aio
+    from app.services.visuals import visuals_service
+
     jobs = db.query(models.Job).filter(
         models.Job.project_id == project_id,
         models.Job.status.in_(["queued", "running"])
     ).all()
+
     count = 0
     for job in jobs:
+        # Signal the running pipeline to bail out at the next check_cancel() call
+        try:
+            scheduler_service.mark_cancelled(job.id)
+        except Exception as e:
+            print(f"mark_cancelled({job.id}) failed: {e}")
         job.status = "cancelled"
+        job.logs = (job.logs or "") + "\nCancelled by user"
         count += 1
+
     db.commit()
+
+    # Hard-stop ComfyUI: interrupt the current render AND clear its pending queue
+    try:
+        def _run_async(coro):
+            try:
+                loop = _aio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        return pool.submit(_aio.run, coro).result(timeout=10)
+                else:
+                    return loop.run_until_complete(coro)
+            except RuntimeError:
+                return _aio.run(coro)
+        _run_async(visuals_service.comfyui.full_stop())
+    except Exception as e:
+        print(f"ComfyUI full_stop on cancel-all failed (non-fatal): {e}")
+
     return {"status": "success", "cancelled": count}
+
 
 @router.post("/{project_id}/archive", response_model=dict)
 def archive_project(project_id: int, db: Session = Depends(get_db)):

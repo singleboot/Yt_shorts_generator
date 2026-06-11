@@ -118,6 +118,30 @@ class ComfyUIClient:
             print(f"ComfyUI interrupt failed: {e}")
             return False
 
+    async def clear_queue(self) -> bool:
+        """Delete all pending items from ComfyUI's internal queue.
+
+        This must be called alongside interrupt() to fully stop generation:
+        - interrupt() stops the *currently executing* prompt
+        - clear_queue() removes all *pending* prompts so nothing starts next
+
+        ComfyUI API: POST /queue  {"clear": true}
+        """
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(f"{self.host}/queue", json={"clear": True})
+                return resp.status_code == 200
+        except Exception as e:
+            print(f"ComfyUI clear_queue failed: {e}")
+            return False
+
+    async def full_stop(self) -> bool:
+        """Interrupt current prompt AND clear the pending queue — complete halt."""
+        interrupted = await self.interrupt()
+        cleared = await self.clear_queue()
+        return interrupted or cleared
+
+
 
 class VisualsService:
     def __init__(self):

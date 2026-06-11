@@ -50,7 +50,8 @@ class SchedulerService:
 
     def mark_cancelled(self, job_id: int):
         self._cancelled.add(job_id)
-        # Best-effort interrupt of any running ComfyUI workflow
+        # Best-effort: interrupt the current ComfyUI render AND clear its queue
+        # so nothing in the pending queue starts next.
         try:
             import asyncio as aio
             try:
@@ -58,13 +59,14 @@ class SchedulerService:
                 if loop.is_running():
                     import concurrent.futures
                     with concurrent.futures.ThreadPoolExecutor() as pool:
-                        pool.submit(aio.run, visuals_service.comfyui.interrupt()).result(timeout=10)
+                        pool.submit(aio.run, visuals_service.comfyui.full_stop()).result(timeout=10)
                 else:
-                    loop.run_until_complete(visuals_service.comfyui.interrupt())
+                    loop.run_until_complete(visuals_service.comfyui.full_stop())
             except RuntimeError:
-                aio.run(visuals_service.comfyui.interrupt())
+                aio.run(visuals_service.comfyui.full_stop())
         except Exception as e:
-            print(f"mark_cancelled: ComfyUI interrupt failed (non-fatal): {e}")
+            print(f"mark_cancelled: ComfyUI full_stop failed (non-fatal): {e}")
+
 
     def _register_default_jobs(self):
         """Register the daily research job."""
