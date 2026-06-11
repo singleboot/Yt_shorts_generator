@@ -61,12 +61,18 @@ def get_project(project_id: int, db: Session = Depends(get_db)):
 
 @router.put("/{project_id}", response_model=dict)
 def update_project(project_id: int, project_data: dict, db: Session = Depends(get_db)):
+    from sqlalchemy.orm.attributes import flag_modified
     project = db.query(models.Project).filter(models.Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    # JSON_COLUMNS that need explicit mutation tracking
+    json_cols = {"visual_settings", "audio_settings", "caption_settings",
+                 "schedule_settings", "seo_settings"}
     for key, value in project_data.items():
         if hasattr(project, key):
             setattr(project, key, value)
+            if key in json_cols:
+                flag_modified(project, key)
     db.commit()
     db.refresh(project)
     return _project_to_dict(project)
@@ -205,6 +211,7 @@ def trigger_batch(project_id: int, body: dict = {}, db: Session = Depends(get_db
 def save_project(project_id: int, body: dict, db: Session = Depends(get_db)):
     """Save project settings and create folder structure on disk."""
     from app.config import settings
+    from sqlalchemy.orm.attributes import flag_modified
     project = db.query(models.Project).filter(models.Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -214,12 +221,16 @@ def save_project(project_id: int, body: dict, db: Session = Depends(get_db)):
             setattr(project, key, body[key])
     if "visual_settings" in body:
         project.visual_settings = body["visual_settings"]
+        flag_modified(project, "visual_settings")
     if "audio_settings" in body:
         project.audio_settings = body["audio_settings"]
+        flag_modified(project, "audio_settings")
     if "caption_settings" in body:
         project.caption_settings = body["caption_settings"]
+        flag_modified(project, "caption_settings")
     if "schedule_settings" in body:
         project.schedule_settings = body["schedule_settings"]
+        flag_modified(project, "schedule_settings")
     if "youtube_channel_id" in body:
         project.youtube_channel_id = body["youtube_channel_id"]
 
@@ -495,8 +506,8 @@ def delete_video(project_id: int, video_index: int, db: Session = Depends(get_db
     return {"status": "success", "message": f"Video {video_index + 1} deleted"}
 
 @router.post("/{project_id}/videos/{video_index}/upload", response_model=dict)
-def upload_single_video(project_id: int, video_index: int, db: Session = Depends(get_db)):
-    """Manually queue a completed video for YouTube upload."""
+def upload_single_video(project_id: int, video_index: int, auto_queue: bool = True, db: Session = Depends(get_db)):
+    """Manually queue or create a draft for completed video YouTube upload."""
     from pathlib import Path as _Path
     import asyncio as _aio
 
@@ -517,15 +528,12 @@ def upload_single_video(project_id: int, video_index: int, db: Session = Depends
     if not video_path.exists():
         raise HTTPException(status_code=400, detail="No completed video file. Generate the video first.")
 
-    # Check if already uploaded/queued
+    # Check if already exists
     existing = db.query(models.Upload).filter(
-        models.Upload.script_id == script.id,
-        models.Upload.status.in_(["queued", "processing", "done"])
+        models.Upload.script_id == script.id
     ).first()
-    if existing:
-        return {"status": "error", "message": f"Video already {existing.status}"}
 
-    # Generate SEO metadata if needed
+    # Generate SEO metadata helper
     from app.services.script import script_service
 
     def run_async(coro):
@@ -539,26 +547,54 @@ def upload_single_video(project_id: int, video_index: int, db: Session = Depends
         except RuntimeError:
             return _aio.run(coro)
 
-    seo = run_async(script_service.generate_seo_metadata(
-        topic=project.source_value or script.title,
-        category=project.category,
-        script_content=script.content
-    ))
+    if existing:
+        existing.status = "queued" if auto_queue else "done"
+        existing.youtube_video_id = None
+        existing.uploaded_at = None
+        existing.video_path = str(video_path)
+        existing.scheduled_for = datetime.utcnow() if auto_queue else None
+        
+        # Generate SEO metadata if empty
+        if not existing.title or not existing.description:
+            seo = run_async(script_service.generate_seo_metadata(
+                topic=project.source_value or script.title,
+                category=project.category,
+                script_content=script.content
+            ))
+            existing.title = seo.get("title", script.title)
+            existing.description = seo.get("description", "")
+            existing.tags = ",".join(seo.get("hashtags", [])[:15])
+        
+        db.commit()
+        upload = existing
+    else:
+        seo = run_async(script_service.generate_seo_metadata(
+            topic=project.source_value or script.title,
+            category=project.category,
+            script_content=script.content
+        ))
 
-    upload = models.Upload(
-        project_id=project_id,
-        script_id=script.id,
-        video_path=str(video_path),
-        scheduled_for=datetime.utcnow(),
-        status="queued",
-        title=seo.get("title", script.title),
-        description=seo.get("description", ""),
-        tags=",".join(seo.get("hashtags", [])[:15])
-    )
-    db.add(upload)
-    db.commit()
+        upload = models.Upload(
+            project_id=project_id,
+            script_id=script.id,
+            video_path=str(video_path),
+            scheduled_for=datetime.utcnow() if auto_queue else None,
+            status="queued" if auto_queue else "done",
+            title=seo.get("title", script.title),
+            description=seo.get("description", ""),
+            tags=",".join(seo.get("hashtags", [])[:15])
+        )
+        db.add(upload)
+        db.commit()
 
-    return {"status": "success", "message": f"Video #{video_index + 1} queued for upload", "upload_id": upload.id}
+    if auto_queue:
+        sched_res = scheduler_service.schedule_single_upload(project_id, video_index, db=db)
+        if sched_res.get("status") == "success":
+            return {"status": "success", "message": f"Video #{video_index + 1} queued and scheduled for {sched_res.get('scheduled_for')}", "upload_id": upload.id}
+        else:
+            return {"status": "success", "message": f"Video #{video_index + 1} queued, but scheduling failed: {sched_res.get('message')}", "upload_id": upload.id}
+
+    return {"status": "success", "message": "SEO Draft Created", "upload_id": upload.id}
 
 @router.post("/{project_id}/videos/{video_index}/post", response_model=dict)
 def post_single_video(project_id: int, video_index: int, db: Session = Depends(get_db)):
@@ -566,7 +602,7 @@ def post_single_video(project_id: int, video_index: int, db: Session = Depends(g
     project = db.query(models.Project).filter(models.Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    return scheduler_service.schedule_single_upload(project_id, video_index)
+    return scheduler_service.schedule_single_upload(project_id, video_index, db=db)
 
 @router.put("/{project_id}/videos/{video_index}/settings", response_model=dict)
 def update_video_settings(project_id: int, video_index: int, data: dict, db: Session = Depends(get_db)):
@@ -701,7 +737,8 @@ def trending_now(project_id: int, body: dict = {}, db: Session = Depends(get_db)
             continue
 
         research = run_async(research_service.research_topic(
-            f"{trending_topic} part {i + 1}", category
+            f"{trending_topic} part {i + 1}", category,
+            db=db, project_id=project_id, video_index=i
         ))
         script_data = run_async(script_service.generate_script(
             topic=research["topic"], category=category,
@@ -866,16 +903,36 @@ def generate_scripts(project_id: int, body: GenerateScriptsRequest = Body(Genera
         i = start_index + offset
 
         if project.source_type == "url" and project.source_value:
-            web_content = run_async(research_service.summarize_webpage(project.source_value))
+            web_content = run_async(research_service.summarize_webpage(
+                project.source_value, db=db, project_id=project_id, video_index=i
+            ))
             topic = f"{project.source_value} part {i + 1}"
             context = web_content
+        elif project.source_type == "reddit" and project.source_value:
+            reddit_data = run_async(research_service.get_reddit_story(project.source_value))
+            story_title = reddit_data.get("title", "")
+            story_content = reddit_data.get("story", "")
+            subreddit_name = reddit_data.get("subreddit", "")
+            context = f"Subreddit: r/{subreddit_name}\nTitle: {story_title}\nStory Content:\n{story_content}"
+            topic = f"Reddit Story: {story_title}"
         else:
             research = run_async(research_service.research_topic(
                 f"{project.source_value} part {i + 1}",
-                project.category
+                project.category,
+                db=db, project_id=project_id, video_index=i
             ))
             topic = research["topic"]
             context = research["context"]
+
+        prev_scripts = db.query(models.Script).filter(
+            models.Script.project_id == project_id,
+            models.Script.video_index < i
+        ).order_by(models.Script.video_index.asc()).all()
+
+        prev_context_list = []
+        for ps in prev_scripts:
+            prev_context_list.append(f"--- PREVIOUS PART {ps.video_index + 1} SCRIPT ---\nTitle: {ps.title}\nContent:\n{ps.content}")
+        prev_scripts_context = "\n\n".join(prev_context_list)
 
         script_data = run_async(script_service.generate_script(
             topic=topic,
@@ -885,7 +942,8 @@ def generate_scripts(project_id: int, body: GenerateScriptsRequest = Body(Genera
             voice_id=voice_id,
             voice_custom=voice_custom,
             music_genre=music_genre,
-            music_custom=music_custom
+            music_custom=music_custom,
+            prev_scripts_context=prev_scripts_context
         ))
 
         max_serial = db.query(func.max(models.Script.global_serial)).scalar() or 0
@@ -1015,16 +1073,29 @@ def add_new_videos(project_id: int, body: AddVideosRequest = Body(AddVideosReque
         new_indices.append(i)
 
         if project.source_type == "url" and project.source_value:
-            web_content = run_async(research_service.summarize_webpage(project.source_value))
+            web_content = run_async(research_service.summarize_webpage(
+                project.source_value, db=db, project_id=project_id, video_index=i
+            ))
             topic = f"{project.source_value} part {i + 1}"
             context = web_content
         else:
             research = run_async(research_service.research_topic(
                 f"{project.source_value} part {i + 1}",
-                project.category
+                project.category,
+                db=db, project_id=project_id, video_index=i
             ))
             topic = research["topic"]
             context = research["context"]
+
+        prev_scripts = db.query(models.Script).filter(
+            models.Script.project_id == project_id,
+            models.Script.video_index < i
+        ).order_by(models.Script.video_index.asc()).all()
+
+        prev_context_list = []
+        for ps in prev_scripts:
+            prev_context_list.append(f"--- PREVIOUS PART {ps.video_index + 1} SCRIPT ---\nTitle: {ps.title}\nContent:\n{ps.content}")
+        prev_scripts_context = "\n\n".join(prev_context_list)
 
         script_data = run_async(script_service.generate_script(
             topic=topic,
@@ -1034,7 +1105,8 @@ def add_new_videos(project_id: int, body: AddVideosRequest = Body(AddVideosReque
             voice_id=voice_id,
             voice_custom=voice_custom,
             music_genre=music_genre,
-            music_custom=music_custom
+            music_custom=music_custom,
+            prev_scripts_context=prev_scripts_context
         ))
 
         max_serial = db.query(func.max(models.Script.global_serial)).scalar() or 0
@@ -1159,13 +1231,16 @@ def regenerate_script(project_id: int, video_index: int, db: Session = Depends(g
             return _aio.run(coro)
 
     if project.source_type == "url" and project.source_value:
-        web_content = run_async(research_service.summarize_webpage(project.source_value))
+        web_content = run_async(research_service.summarize_webpage(
+            project.source_value, db=db, project_id=project_id, video_index=video_index
+        ))
         topic = f"{project.source_value} part {video_index + 1}"
         context = web_content
     else:
         research = run_async(research_service.research_topic(
             f"{project.source_value} part {video_index + 1}",
-            project.category
+            project.category,
+            db=db, project_id=project_id, video_index=video_index
         ))
         topic = research["topic"]
         context = research["context"]
@@ -1531,6 +1606,79 @@ def list_video_scenes(project_id: int, video_index: int,
         })
     return out
 
+
+@router.put("/{project_id}/videos/{video_index}/scenes/{scene_index}", response_model=dict)
+def update_video_scene(project_id: int, video_index: int, scene_index: int,
+                       data: dict, db: Session = Depends(get_db)):
+    """Update a scene's narration text and visual description in the script."""
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    script = db.query(models.Script).filter(
+        models.Script.project_id == project_id,
+        models.Script.video_index == video_index,
+    ).order_by(models.Script.created_at.desc()).first()
+    if not script:
+        raise HTTPException(status_code=404, detail="Script not found")
+
+    # Load scenes
+    import json
+    scenes = script.scenes or []
+    if isinstance(scenes, str):
+        scenes = json.loads(scenes)
+    else:
+        # Avoid editing in-place by copy
+        scenes = list(scenes)
+
+    if scene_index < 0 or scene_index >= len(scenes):
+        raise HTTPException(status_code=400, detail="Scene index out of range")
+
+    scene = dict(scenes[scene_index])
+    
+    # Update fields
+    if "narration" in data:
+        scene["narration_text"] = data["narration"]
+        scene["narration"] = data["narration"]
+    if "visual_description" in data:
+        scene["visual_description"] = data["visual_description"]
+    if "duration_seconds" in data:
+        scene["duration_seconds"] = float(data["duration_seconds"])
+
+    scenes[scene_index] = scene
+    script.scenes = scenes
+    
+    # Also update script.content to match
+    narration_lines = []
+    for s in scenes:
+        line = s.get("narration_text") or s.get("narration") or ""
+        if line:
+            narration_lines.append(line)
+    script.content = "\n\n".join(narration_lines)
+
+    db.commit()
+    
+    # We should delete the old audio asset (if it exists) so it will regenerate on next assembly
+    try:
+        audio_dir = settings.PROJECTS_DIR / str(project_id) / "audio" / str(video_index)
+        v_path = audio_dir / f"voice_{scene_index+1:02d}.mp3"
+        if v_path.exists():
+            v_path.unlink()
+            print(f"[update_scene] Deleted old audio file {v_path} due to text update")
+        # Also delete in DB assets
+        db.query(models.Asset).filter(
+            models.Asset.project_id == project_id,
+            models.Asset.script_id == script.id,
+            models.Asset.scene_index == scene_index,
+            models.Asset.asset_type == "audio"
+        ).delete()
+        db.commit()
+    except Exception as e:
+        print(f"[update_scene] Audio cleanup error: {e}")
+
+    return {"status": "success", "scene": scene}
+
+
 # ── Calendar endpoints ──────────────────────────────────────────────────
 
 @router.get("/{project_id}/calendar", response_model=dict)
@@ -1560,6 +1708,18 @@ def get_project_calendar(project_id: int, year: int, month: int, db: Session = D
         d = u.scheduled_for.day if u.scheduled_for else None
         if d:
             days[str(d)] = days.get(str(d), 0) + 1
+        
+        video_url = None
+        if u.video_path:
+            try:
+                from pathlib import Path
+                video_path = Path(u.video_path).resolve()
+                storage = Path(settings.STORAGE_DIR).resolve()
+                rel = video_path.relative_to(storage)
+                video_url = f"/storage/{rel.as_posix()}"
+            except Exception:
+                video_url = None
+
         upload_list.append({
             "id": u.id,
             "script_id": u.script_id,
@@ -1568,6 +1728,9 @@ def get_project_calendar(project_id: int, year: int, month: int, db: Session = D
             "scheduled_for": u.scheduled_for.isoformat() if u.scheduled_for else None,
             "youtube_video_id": u.youtube_video_id,
             "video_path": u.video_path,
+            "video_url": video_url,
+            "description": u.description,
+            "tags": u.tags,
         })
 
     return {"days": days, "uploads": upload_list}

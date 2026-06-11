@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import json
 from datetime import datetime, timedelta
 from typing import List
 from pathlib import Path
@@ -15,9 +16,12 @@ from app.services.visuals import visuals_service
 from app.services.audio import audio_service
 from app.services.video import video_service
 from app.services.youtube import youtube_service
+from app.services.telegram import telegram_bot
 
 class SchedulerService:
     def __init__(self):
+        import threading
+        self._queue_lock = threading.Lock()
         self.scheduler = BackgroundScheduler()
         self.scheduler.start()
         self._register_default_jobs()
@@ -27,6 +31,19 @@ class SchedulerService:
         # Tracks which job is currently driving the ComfyUI client, so the
         # /jobs/{id}/cancel route can interrupt ComfyUI.
         self._active_job_id: int = None
+
+        # Clean up any stuck "running" jobs from a previous run
+        db = SessionLocal()
+        try:
+            stuck_jobs = db.query(models.Job).filter(models.Job.status == "running").all()
+            for job in stuck_jobs:
+                job.status = "failed"
+                job.logs += "\n[System] Job aborted due to server restart."
+            db.commit()
+        except Exception as e:
+            print(f"Failed to clean up stuck running jobs: {e}")
+        finally:
+            db.close()
 
     def is_cancelled(self, job_id: int) -> bool:
         return job_id in self._cancelled
@@ -109,34 +126,57 @@ class SchedulerService:
             db.close()
     
     def _process_job_queue(self):
-        """Process queued generation jobs."""
-        db = SessionLocal()
+        """Process queued generation jobs sequentially, one at a time."""
+        # Non-blocking acquire so that only one thread runs the queue processor loop at a time.
+        if not self._queue_lock.acquire(blocking=False):
+            return
+
         try:
-            jobs = db.query(models.Job).filter(
-                models.Job.status == "queued",
-                models.Job.job_type.in_(["batch", "generate", "video"])
-            ).limit(50).all()
-            
-            for job in jobs:
-                job.status = "running"
-                job.started_at = datetime.utcnow()
-                db.commit()
-                
-                try:
-                    if job.job_type == "video":
-                        self._run_single_video_job(db, job)
-                    else:
-                        self._run_generation_job(db, job)
-                    job.status = "completed"
-                    job.progress = 100
-                except Exception as e:
-                    job.status = "failed"
-                    job.logs += f"\nError: {str(e)}"
-                
-                db.commit()
-                
+            db = SessionLocal()
+            try:
+                # Check if there is already a running generation job.
+                # If so, do not start another one to prevent GPU congestion.
+                running_job = db.query(models.Job).filter(
+                    models.Job.status == "running",
+                    models.Job.job_type.in_(["batch", "generate", "video"])
+                ).first()
+                if running_job:
+                    return
+
+                while True:
+                    # Fetch the oldest queued job
+                    job = db.query(models.Job).filter(
+                        models.Job.status == "queued",
+                        models.Job.job_type.in_(["batch", "generate", "video"])
+                    ).order_by(models.Job.id.asc()).first()
+                    
+                    if not job:
+                        break
+                    
+                    # Mark it as running immediately
+                    job.status = "running"
+                    job.started_at = datetime.utcnow()
+                    db.commit()
+                    db.refresh(job)
+                    
+                    try:
+                        if job.job_type == "video":
+                            self._run_single_video_job(db, job)
+                        else:
+                            self._run_generation_job(db, job)
+                        job.status = "completed"
+                        job.progress = 100
+                        db.commit()
+                        telegram_bot.notify_job_status(job.id, job.logs, job.progress, job.status, result=getattr(job, "result", None))
+                    except Exception as e:
+                        job.status = "failed"
+                        job.logs += f"\nError: {str(e)}"
+                        db.commit()
+                        telegram_bot.notify_job_status(job.id, job.logs, job.progress, job.status)
+            finally:
+                db.close()
         finally:
-            db.close()
+            self._queue_lock.release()
     
     def _run_generation_job(self, db, job):
         """Run the full generation pipeline for a project. Generates video_count videos."""
@@ -209,11 +249,12 @@ class SchedulerService:
 
     def _run_single_video_job_inner(self, db, job):
         import json
+        job_id = job.id
         def check_cancel():
             """Returns True if the job was cancelled via /jobs/{id}/cancel.
             Also interrupts the running ComfyUI prompt so generation halts
             within a few seconds."""
-            if self.is_cancelled(job.id):
+            if self.is_cancelled(job_id):
                 # Make doubly sure ComfyUI is interrupted
                 try:
                     import asyncio as aio
@@ -269,8 +310,9 @@ class SchedulerService:
         job.progress = 5
         job.logs = f"Video {video_num}/{video_count} - Researching topic..."
         db.commit()
+        telegram_bot.notify_job_status(job.id, job.logs, job.progress, job.status)
         
-        # 1. Research topic (URL mode or auto_research mode)
+        # 1. Research topic (URL mode, Reddit mode, or auto_research mode)
         if project.source_type == "url" and project.source_value:
             web_content = run_async(research_service.summarize_webpage(
                 project.source_value,
@@ -280,6 +322,15 @@ class SchedulerService:
                 video_index=video_num - 1,
             ))
             topic = f"{project.source_value} part {video_num}"
+            research = {"topic": topic, "context": web_content}
+        elif project.source_type == "reddit" and project.source_value:
+            reddit_data = run_async(research_service.get_reddit_story(project.source_value))
+            story_title = reddit_data.get("title", "")
+            story_content = reddit_data.get("story", "")
+            subreddit_name = reddit_data.get("subreddit", "")
+            
+            web_content = f"Subreddit: r/{subreddit_name}\nTitle: {story_title}\nStory Content:\n{story_content}"
+            topic = f"Reddit Story: {story_title}"
             research = {"topic": topic, "context": web_content}
         else:
             research = run_async(research_service.research_topic(
@@ -322,11 +373,24 @@ class SchedulerService:
             # 2b. No existing script -> generate a fresh one
             job.logs = f"Video {video_num}/{video_count} - Generating script..."
             db.commit()
+
+            # Query previous scripts for duplication prevention
+            prev_scripts = db.query(models.Script).filter(
+                models.Script.project_id == project.id,
+                models.Script.video_index < video_num - 1
+            ).order_by(models.Script.video_index.asc()).all()
+
+            prev_context_list = []
+            for ps in prev_scripts:
+                prev_context_list.append(f"--- PREVIOUS PART {ps.video_index + 1} SCRIPT ---\nTitle: {ps.title}\nContent:\n{ps.content}")
+            prev_scripts_context = "\n\n".join(prev_context_list)
+
             script_data = run_async(script_service.generate_script(
                 topic=topic,
                 category=project.category,
                 context=research["context"],
-                duration=duration
+                duration=duration,
+                prev_scripts_context=prev_scripts_context
             ))
 
         # 3. Save script (only if we generated a new one; otherwise the existing
@@ -552,6 +616,30 @@ class SchedulerService:
         job.current_stage = f"scenes_t2v:{len(scene_clip_paths)}/{len(scenes)}"
         db.commit()
 
+        # Look up the actual saved script (created by generate-scripts endpoint) for this video_index
+        # to get any per-video overrides (voice, music, etc.)
+        existing_script = db.query(models.Script).filter(
+            models.Script.project_id == project.id,
+            models.Script.video_index == video_num - 1
+        ).first()
+        script_vo = {}
+        if existing_script and existing_script.video_overrides:
+            script_vo = existing_script.video_overrides
+            if isinstance(script_vo, str):
+                script_vo = json.loads(script_vo)
+
+        # Resolve voice settings
+        effective_voice = audio_settings.get("voice_id", "en-US-AriaNeural")
+        voice_custom = audio_settings.get("voice_custom", "")
+        if script_vo.get("voice_id"):
+            effective_voice = script_vo["voice_id"]
+            voice_custom = script_vo.get("voice_custom", "")
+        speaker_for_tts = voice_custom if effective_voice == "__custom__" else effective_voice
+
+        # Determine if voice is Edge TTS
+        qwen_ids = ["aiden", "dylan", "eric", "ono_anna", "ryan", "serena", "sohee", "uncle_fu", "vivian"]
+        is_edge_tts = not (speaker_for_tts.lower() in qwen_ids or any(q in speaker_for_tts.lower() for q in qwen_ids))
+
         # If every scene is already on disk (full resume case), the t2v loop
         # above did zero work. Skip voiceover too if it's already done.
         if "voiceover" in skipped_stages and not check_cancel():
@@ -560,6 +648,7 @@ class SchedulerService:
             all_voice_present = all(
                 (voice_dir / f"voice_{i+1:02d}.mp3").exists()
                 and (voice_dir / f"voice_{i+1:02d}.mp3").stat().st_size > 1024
+                and (not is_edge_tts or (voice_dir / f"voice_{i+1:02d}.json").exists())
                 for i in range(len(scenes))
                 if scenes[i].get("narration_text")
             )
@@ -574,26 +663,6 @@ class SchedulerService:
         job.logs = f"Video {video_num}/{video_count} - Generating voiceover..."
         db.commit()
 
-        # Look up the actual saved script (created by generate-scripts endpoint) for this video_index
-        # to get any per-video overrides (voice, music, etc.)
-        existing_script = db.query(models.Script).filter(
-            models.Script.project_id == project.id,
-            models.Script.video_index == video_num - 1
-        ).first()
-        script_vo = {}
-        if existing_script and existing_script.video_overrides:
-            script_vo = existing_script.video_overrides
-            if isinstance(script_vo, str):
-                script_vo = json.loads(script_vo)
-
-        # 5. Generate audio
-        effective_voice = audio_settings.get("voice_id", "en-US-AriaNeural")
-        voice_custom = audio_settings.get("voice_custom", "")
-        if script_vo.get("voice_id"):
-            effective_voice = script_vo["voice_id"]
-            voice_custom = script_vo.get("voice_custom", "")
-        speaker_for_tts = voice_custom if effective_voice == "__custom__" else effective_voice
-
         # RESUME: if the previous run completed voiceover (current_stage passed
         # it OR we set the sentinel above in the scenes_t2v check), reuse the
         # mp3 files on disk rather than calling ComfyUI TTS again.
@@ -607,11 +676,11 @@ class SchedulerService:
                 if not sc.get("narration_text"):
                     continue
                 v_path = audio_dir / f"voice_{i+1:02d}.mp3"
-                if v_path.exists() and v_path.stat().st_size > 1024:
+                if v_path.exists() and v_path.stat().st_size > 1024 and (not is_edge_tts or v_path.with_suffix(".json").exists()):
                     audio_assets.append({
                         "scene_index": i,
                         "type": "audio",
-                        "source": "comfyui_qwen3_tts",
+                        "source": "comfyui_qwen3_tts" if not is_edge_tts else "tts",
                         "local_path": str(v_path),
                         "text": sc["narration_text"],
                         "voice_id": speaker_for_tts,
@@ -637,15 +706,80 @@ class SchedulerService:
                 db.commit()
                 audio_assets = []
 
+        # Map each audio asset to its planned duration
+        scenes = script_data.get("scenes", [])
         for asset in audio_assets:
-            db.add(models.Asset(
-                project_id=project.id,
-                script_id=script.id,
-                scene_index=asset["scene_index"],
-                asset_type="audio",
-                source="comfyui_qwen3_tts",
-                local_path=asset["local_path"]
-            ))
+            idx = asset.get("scene_index")
+            if idx is not None and idx < len(scenes):
+                asset["duration_seconds"] = scenes[idx].get("duration_seconds", 6)
+
+        # Generate and append outro voiceover if configured
+        outro_seconds = getattr(settings, "OUTRO_DURATION_SECONDS", 0) or 0
+        outro_path_setting = getattr(settings, "LIKE_SUBSCRIBE_OUTRO_PATH", None)
+        if outro_seconds > 0 and outro_path_setting and Path(outro_path_setting).exists():
+            outro_text = script_data.get("call_to_action", "Like, subscribe, and hit the bell for more!")
+            outro_vo_path = audio_dir / "voice_outro.mp3"
+            
+            outro_exists = outro_vo_path.exists() and outro_vo_path.stat().st_size > 1024
+            success = True
+            if not outro_exists:
+                try:
+                    success = run_async(audio_service.generate_voiceover(
+                        text=outro_text,
+                        voice_id=speaker_for_tts,
+                        output_path=outro_vo_path
+                    ))
+                except Exception as e:
+                    print(f"[Outro VO] generation failed: {e}")
+                    success = False
+            
+            if success and outro_vo_path.exists():
+                outro_asset = {
+                    "scene_index": 999,
+                    "type": "audio",
+                    "source": "tts",
+                    "local_path": str(outro_vo_path),
+                    "text": outro_text,
+                    "voice_id": speaker_for_tts,
+                    "duration_seconds": float(outro_seconds)
+                }
+                if not any(a.get("scene_index") == 999 for a in audio_assets):
+                    audio_assets.append(outro_asset)
+                    # Add to database assets if not already there
+                    db_has_outro = db.query(models.Asset).filter(
+                        models.Asset.project_id == project.id,
+                        models.Asset.script_id == script.id,
+                        models.Asset.scene_index == 999,
+                        models.Asset.asset_type == "audio"
+                    ).first()
+                    if not db_has_outro:
+                        db.add(models.Asset(
+                            project_id=project.id,
+                            script_id=script.id,
+                            scene_index=999,
+                            asset_type="audio",
+                            source="tts",
+                            local_path=str(outro_vo_path)
+                        ))
+                        db.commit()
+
+        for asset in audio_assets:
+            # Check if asset is already in database to avoid duplicate DB insertions
+            existing_asset = db.query(models.Asset).filter(
+                models.Asset.project_id == project.id,
+                models.Asset.script_id == script.id,
+                models.Asset.scene_index == asset["scene_index"],
+                models.Asset.asset_type == "audio"
+            ).first()
+            if not existing_asset:
+                db.add(models.Asset(
+                    project_id=project.id,
+                    script_id=script.id,
+                    scene_index=asset["scene_index"],
+                    asset_type="audio",
+                    source=asset.get("source", "tts"),
+                    local_path=asset["local_path"]
+                ))
 
         db.commit()
 
@@ -1123,9 +1257,12 @@ class SchedulerService:
         finally:
             db.close()
     
-    def schedule_single_upload(self, project_id: int, video_index: int):
+    def schedule_single_upload(self, project_id: int, video_index: int, db = None):
         """Schedule a single video upload using global settings."""
-        db = SessionLocal()
+        is_local = False
+        if db is None:
+            db = SessionLocal()
+            is_local = True
         try:
             script = db.query(models.Script).filter(
                 models.Script.project_id == project_id,
@@ -1172,7 +1309,8 @@ class SchedulerService:
             
             return {"status": "error", "message": "No available slot found within 30 days"}
         finally:
-            db.close()
+            if is_local:
+                db.close()
 
     def regenerate_single_scene(self, project_id: int, video_index: int, scene_index: int,
                                  seed_offset: int = 1, custom_prompt: str = None) -> dict:
@@ -1357,6 +1495,20 @@ class SchedulerService:
             if not project:
                 return {"status": "error", "message": "Project not found"}
 
+            import asyncio as aio
+            def run_async(coro):
+                try:
+                    loop = aio.get_event_loop()
+                    if loop.is_running():
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as pool:
+                            future = pool.submit(aio.run, coro)
+                            return future.result()
+                    else:
+                        return loop.run_until_complete(coro)
+                except RuntimeError:
+                    return aio.run(coro)
+
             script = db.query(models.Script).filter(
                 models.Script.project_id == project_id,
                 models.Script.video_index == video_index,
@@ -1388,14 +1540,62 @@ class SchedulerService:
             if not scene_clips:
                 return {"status": "error", "message": "No scene clips found on disk"}
 
+            # Resolve voice settings
+            audio_settings = json.loads(project.audio_settings) if isinstance(project.audio_settings, str) else (project.audio_settings or {})
+            script_vo = {}
+            if script.video_overrides:
+                script_vo = script.video_overrides
+                if isinstance(script_vo, str):
+                    script_vo = json.loads(script_vo)
+
+            effective_voice = audio_settings.get("voice_id", "en-US-AriaNeural")
+            voice_custom = audio_settings.get("voice_custom", "")
+            if script_vo.get("voice_id"):
+                effective_voice = script_vo["voice_id"]
+                voice_custom = script_vo.get("voice_custom", "")
+            speaker_for_tts = voice_custom if effective_voice == "__custom__" else effective_voice
+
+            qwen_ids = ["aiden", "dylan", "eric", "ono_anna", "ryan", "serena", "sohee", "uncle_fu", "vivian"]
+            is_edge_tts = not (speaker_for_tts.lower() in qwen_ids or any(q in speaker_for_tts.lower() for q in qwen_ids))
+
             # Collect audio assets
             audio_assets = []
             for i in range(len(scenes)):
                 a = audio_dir / f"voice_{i+1:02d}.mp3"
                 if a.exists():
-                    audio_assets.append({"local_path": str(a), "duration_seconds": scenes[i].get("duration_seconds", 8)})
+                    # Generate precise word timings if .json sidecar is missing for Edge-TTS
+                    if is_edge_tts and not a.with_suffix(".json").exists():
+                        try:
+                            from app.services.audio import audio_service
+                            text = scenes[i].get("narration_text", "")
+                            if text:
+                                print(f"[reassemble] Generating missing timing sidecar for scene {i+1}...", flush=True)
+                                run_async(audio_service.generate_voiceover(text, speaker_for_tts, a))
+                        except Exception as ge:
+                            print(f"[reassemble] Failed to generate timings for scene {i+1}: {ge}", flush=True)
+
+                    audio_assets.append({
+                        "scene_index": i,
+                        "type": "audio",
+                        "local_path": str(a),
+                        "duration_seconds": scenes[i].get("duration_seconds", 8)
+                    })
                 else:
-                    audio_assets.append({"local_path": None, "duration_seconds": scenes[i].get("duration_seconds", 8)})
+                    audio_assets.append({
+                        "scene_index": i,
+                        "type": "audio",
+                        "local_path": None,
+                        "duration_seconds": scenes[i].get("duration_seconds", 8)
+                    })
+
+            # Check if voice_outro.mp3 exists, and append it
+            a_outro = audio_dir / "voice_outro.mp3"
+            if a_outro.exists():
+                audio_assets.append({
+                    "local_path": str(a_outro),
+                    "duration_seconds": float(getattr(settings, "OUTRO_DURATION_SECONDS", 6.0) or 6.0),
+                    "scene_index": 999
+                })
 
             music_path = audio_dir / "background_music.mp3"
             if not music_path.exists():
@@ -1489,19 +1689,31 @@ class SchedulerService:
             if not script:
                 return {"status": "error", "message": "No script for this video"}
 
+            # We check if the final video exists, but don't strictly block cleanup if it doesn't
+            # (the user might want to clean up intermediate scenes for abandoned/failed renders to reclaim space).
             final_path = settings.PROJECTS_DIR / str(project_id) / "final" / str(video_index) / "final_video.mp4"
-            if not final_path.exists():
-                return {"status": "error", "message": "No final video to keep - build the video first"}
 
-            # Idempotency: if videos/{idx}/ is already gone, treat as already-cleaned
+
+            # Idempotency: check videos, audio, and fallback audio dirs
             videos_dir = settings.PROJECTS_DIR / str(project_id) / "videos" / str(video_index)
             audio_dir = settings.PROJECTS_DIR / str(project_id) / "audio" / str(video_index)
-            if not videos_dir.exists() and not audio_dir.exists():
+            audio_dir_fallback = settings.PROJECTS_DIR / str(project_id) / str(video_index)
+
+            if not videos_dir.exists() and not audio_dir.exists() and not audio_dir_fallback.exists():
                 return {"status": "success", "bytes_freed": 0, "files_deleted": 0, "already_cleaned": True}
+
+            import os
+            import stat
+            def remove_readonly(func, path, excinfo):
+                try:
+                    os.chmod(path, stat.S_IWRITE)
+                    func(path)
+                except Exception as chmod_err:
+                    print(f"[cleanup] chmod failed for {path}: {chmod_err}", flush=True)
 
             bytes_freed = 0
             files_deleted = 0
-            for target_dir in (videos_dir, audio_dir):
+            for target_dir in (videos_dir, audio_dir, audio_dir_fallback):
                 if not target_dir.exists():
                     continue
                 # Walk and sum sizes
@@ -1514,7 +1726,7 @@ class SchedulerService:
                             pass
                 # rmtree
                 try:
-                    shutil.rmtree(target_dir)
+                    shutil.rmtree(target_dir, onerror=remove_readonly)
                 except Exception as e:
                     print(f"[cleanup] Failed to remove {target_dir}: {e}", flush=True)
 
@@ -1540,6 +1752,11 @@ class SchedulerService:
                 "bytes_freed": bytes_freed,
                 "files_deleted": files_deleted,
             }
+        except Exception as global_exc:
+            print(f"[cleanup] Global exception in cleanup_intermediate_scenes: {global_exc}", flush=True)
+            import traceback
+            traceback.print_exc()
+            return {"status": "error", "message": f"Cleanup execution error: {str(global_exc)}"}
         finally:
             db.close()
 

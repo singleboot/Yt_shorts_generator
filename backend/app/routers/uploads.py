@@ -31,13 +31,37 @@ def list_uploads(status: str = None, db: Session = Depends(get_db)):
         for u in uploads
     ]
 
+@router.get("/{upload_id}", response_model=dict)
+def get_upload(upload_id: int, db: Session = Depends(get_db)):
+    u = db.query(models.Upload).filter(models.Upload.id == upload_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Upload not found")
+    return {
+        "id": u.id,
+        "project_id": u.project_id,
+        "script_id": u.script_id,
+        "video_path": u.video_path,
+        "scheduled_for": u.scheduled_for.isoformat() if u.scheduled_for else None,
+        "youtube_video_id": u.youtube_video_id,
+        "status": u.status,
+        "title": u.title,
+        "description": u.description,
+        "tags": u.tags,
+        "thumbnail_path": u.thumbnail_path
+    }
+
 @router.post("/{upload_id}/now", response_model=dict)
 def upload_now(upload_id: int, db: Session = Depends(get_db)):
     upload = db.query(models.Upload).filter(models.Upload.id == upload_id).first()
     if not upload:
         raise HTTPException(status_code=404, detail="Upload not found")
-    
+    project = db.query(models.Project).filter(models.Project.id == upload.project_id).first()
+    channel = project.youtube_channel if project else None
+    if not channel:
+        raise HTTPException(status_code=400, detail="No YouTube channel assigned to this project")
+
     result = youtube_service.upload_video(
+        credentials_file=channel.credentials_file,
         video_path=upload.video_path,
         title=upload.title or "Untitled Short",
         description=upload.description or "",
@@ -95,3 +119,13 @@ def upload_thumbnail(upload_id: int, file: UploadFile = File(...), db: Session =
     upload.thumbnail_path = str(thumb_path)
     db.commit()
     return {"status": "success", "thumbnail_path": str(thumb_path)}
+
+@router.delete("/{upload_id}", response_model=dict)
+def delete_upload(upload_id: int, db: Session = Depends(get_db)):
+    u = db.query(models.Upload).filter(models.Upload.id == upload_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Upload not found")
+    db.delete(u)
+    db.commit()
+    return {"status": "success", "message": "Upload cancelled and deleted"}
+
