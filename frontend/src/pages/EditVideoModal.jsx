@@ -1209,9 +1209,11 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
               )}
               {scenes.map(s => {
                 const status = sceneRegenStatus[s.scene_index];
-                const isRegenerating = status === 'regenerating';
+                // A scene is regenerating if local status is regenerating/queued OR backend PromptLog is running
+                const isRegenerating = status === 'regenerating' || s.status === 'running';
                 const isQueued = status === 'queued';
-                const isFailed = status === 'failed';
+                // A scene is failed if the local status is failed OR the backend PromptLog status is failed
+                const isFailed = status === 'failed' || s.status === 'failed';
                 const edit = promptEdits[s.scene_index];
                 const isTweaking = edit?.expanded || false;
                 const effectiveText = edit?.text ?? s.visual_description ?? '';
@@ -1253,7 +1255,7 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
                         {isFailed && (
                           <div className="mt-2 text-[10px] text-[#FF5757] flex items-center gap-1.5">
                             <AlertCircle className="h-3 w-3" />
-                            Failed
+                            Failed to Generate (Backend)
                           </div>
                         )}
 
