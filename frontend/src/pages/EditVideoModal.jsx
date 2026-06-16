@@ -7,7 +7,7 @@ import api from '../api/client';
 function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReassemble }) {
   const vs = project.visual_settings || {};
   const [selectedStyle, setSelectedStyle] = useState(video.overrides?.ai_style || vs.ai_style || 'none');
-  const [selectedVoice, setSelectedVoice] = useState(video.overrides?.voice_id || vs.voice_id || 'en-US-AriaNeural');
+  const [selectedVoice, setSelectedVoice] = useState(video.overrides?.voice_id || vs.voice_id || 'kokoro-am_adam');
   const [selectedMusic, setSelectedMusic] = useState(video.overrides?.music_genre || vs.music_genre || 'none');
   const [musicPrompt, setMusicPrompt] = useState(video.overrides?.music_prompt || '');
   const [voiceCustom, setVoiceCustom] = useState(video.overrides?.voice_custom || '');
@@ -232,6 +232,7 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
   const [reassembleMsg, setReassembleMsg] = useState('');
   const [promptEdits, setPromptEdits] = useState({});
   const [tweakingAll, setTweakingAll] = useState(false);
+  const [regenTimestamp, setRegenTimestamp] = useState(Date.now());
 
   const togglePreview = (type, id) => {
     const key = `${type}:${id}`;
@@ -267,12 +268,24 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
         const res = await api.get(`/projects/${project.id}/videos/${video.index}/scenes`);
         const fresh = res.data || [];
         setScenes(fresh);
-        const next = {};
-        fresh.forEach(s => { next[s.scene_index] = s.has_clip ? 'completed' : 'regenerating'; });
-        setSceneRegenStatus(next);
+        
+        setSceneRegenStatus(prev => {
+          const next = { ...prev };
+          fresh.forEach(s => {
+            // Only update active in-flight or status matches
+            if (next[s.scene_index] === 'regenerating') {
+              if (s.has_clip) {
+                next[s.scene_index] = 'completed';
+              }
+            } else if (!next[s.scene_index]) {
+              next[s.scene_index] = s.has_clip ? 'completed' : 'idle';
+            }
+          });
+          return next;
+        });
+
         if (reassembleStatus === 'running') {
-          setReassembleStatus('completed');
-          setReassembleMsg('Final video rebuilt');
+          // If we had a running reassemble, we'll check logic elsewhere or complete it
         }
       } catch (e) {
         // Ignore
@@ -292,21 +305,62 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
       setScenesLoading(false);
     }
   };
+  const [regenQueue, setRegenQueue] = useState([]);
+  const [activeRegen, setActiveRegen] = useState(null);
 
-  const handleRegenScene = async (sceneIndex, customPrompt = null) => {
+  // Process the queue serially
+  useEffect(() => {
+    if (regenQueue.length > 0 && activeRegen === null) {
+      const nextJob = regenQueue[0];
+      setActiveRegen(nextJob);
+      setRegenQueue(prev => prev.slice(1));
+      processRegen(nextJob);
+    }
+  }, [regenQueue, activeRegen]);
+
+  const processRegen = async ({ sceneIndex, customPrompt }) => {
     setSceneRegenStatus(prev => ({ ...prev, [sceneIndex]: 'regenerating' }));
+    
+    // Auto-save edits if dirty
+    const edit = promptEdits[sceneIndex];
+    if (edit && edit.dirty) {
+      console.log('[Regen] Unsaved edits detected. Automatically saving scene edits first...');
+      try {
+        const payload = {
+          visual_description: edit.text,
+          narration: edit.narration
+        };
+        const saveRes = await api.put(`/projects/${project.id}/videos/${video.index}/scenes/${sceneIndex}`, payload);
+        if (saveRes.data?.status === 'success') {
+          setScenes(prev => prev.map(s => s.scene_index === sceneIndex ? {
+            ...s,
+            visual_description: edit.text,
+            narration: edit.narration,
+            has_clip: s.has_clip
+          } : s));
+          setPromptEdit(sceneIndex, { dirty: false });
+        }
+      } catch (e) {
+        console.error("Failed to save edits before regen", e);
+      }
+    }
+
     try {
       const params = { seed_offset: 1 };
       if (customPrompt && customPrompt.trim()) {
         params.custom_prompt = customPrompt.trim();
       }
+      
+      // We use a very long timeout (e.g. 15 mins) for the Axios request to prevent dropping the connection
       const res = await api.post(
         `/projects/${project.id}/videos/${video.index}/scenes/${sceneIndex}/regenerate`,
         null,
-        { params }
+        { params, timeout: 900000 }
       );
+      
       if (res.data?.status === 'success') {
         setSceneRegenStatus(prev => ({ ...prev, [sceneIndex]: 'completed' }));
+        setRegenTimestamp(Date.now());
         setPromptEdits(prev => {
           const next = { ...prev };
           if (next[sceneIndex]) {
@@ -320,9 +374,19 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
         setSceneRegenStatus(prev => ({ ...prev, [sceneIndex]: 'failed' }));
       }
     } catch (e) {
+      console.error(e);
+      // Fallback: the connection might have timed out, but ComfyUI might still be working.
       setSceneRegenStatus(prev => ({ ...prev, [sceneIndex]: 'failed' }));
-      alert('Scene regeneration failed: ' + (e?.response?.data?.detail || e.message));
+      alert('Scene regeneration encountered an error or timed out: ' + (e?.response?.data?.detail || e.message) + '\n\nIf it timed out, ComfyUI may still be generating it in the background.');
+    } finally {
+      setActiveRegen(null);
     }
+  };
+
+  const handleRegenScene = (sceneIndex, customPrompt = null) => {
+    // Add to queue instead of processing immediately
+    setRegenQueue(prev => [...prev, { sceneIndex, customPrompt }]);
+    setSceneRegenStatus(prev => ({ ...prev, [sceneIndex]: 'queued' }));
   };
 
   const setPromptEdit = (sceneIndex, partial) => {
@@ -1146,13 +1210,14 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
               {scenes.map(s => {
                 const status = sceneRegenStatus[s.scene_index];
                 const isRegenerating = status === 'regenerating';
+                const isQueued = status === 'queued';
                 const isFailed = status === 'failed';
                 const edit = promptEdits[s.scene_index];
                 const isTweaking = edit?.expanded || false;
                 const effectiveText = edit?.text ?? s.visual_description ?? '';
                 const isDirty = edit?.dirty || false;
                 return (
-                  <div key={s.scene_index} className={`neo-card p-3 ${isRegenerating ? 'border-l-4 border-[#C6F11D]' : isFailed ? 'border-l-4 border-[#FF5757]' : isDirty ? 'border-l-4 border-[#FFC845]' : ''}`}>
+                  <div key={s.scene_index} className={`neo-card p-3 ${isRegenerating ? 'border-l-4 border-[#C6F11D]' : isQueued ? 'border-l-4 border-[#6BFF64]' : isFailed ? 'border-l-4 border-[#FF5757]' : isDirty ? 'border-l-4 border-[#FFC845]' : ''}`}>
                     <div className="flex items-start gap-3">
                       <div className="flex flex-col items-center justify-center w-10 h-10 rounded-lg bg-[#050608] border border-[#252A33] shrink-0">
                         <span className="text-[10px] text-[#5F6772]">SCENE</span>
@@ -1177,6 +1242,12 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
                           <div className="mt-2 text-[10px] text-[#C6F11D] flex items-center gap-1.5">
                             <Spinner className="h-3 w-3 animate-spin" />
                             Regenerating scene... (~7 min)
+                          </div>
+                        )}
+                        {isQueued && (
+                          <div className="mt-2 text-[10px] text-[#6BFF64] flex items-center gap-1.5">
+                            <RefreshCw className="h-3 w-3 animate-pulse" />
+                            Queued for regeneration...
                           </div>
                         )}
                         {isFailed && (
@@ -1207,6 +1278,23 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
                                 </button>
                               </div>
                             </div>
+
+                            {s.has_clip && s.clip_url && (
+                              <div className={`relative rounded-xl overflow-hidden border border-[#252A33] bg-[#050608] mx-auto ${
+                                vs.aspect === 'horizontal' || vs.aspect === 'horizontal_hd'
+                                  ? 'w-full aspect-video max-w-[280px]'
+                                  : 'w-[140px] aspect-[9/16]'
+                              } mb-3 shadow-inner group`}>
+                                <video
+                                  src={`${s.clip_url}?t=${regenTimestamp}`}
+                                  controls
+                                  loop
+                                  muted
+                                  playsInline
+                                  className="w-full h-full object-cover"
+                                />
+                              </div>
+                            )}
 
                             <div className="space-y-1">
                               <label className="text-[9px] text-[#9AA0A6] uppercase tracking-wider block font-semibold">Spoken Caption / Narration</label>
@@ -1249,7 +1337,7 @@ function EditVideoModal({ video, project, onClose, onSave, onSceneRegen, onReass
                           {isTweaking ? 'Hide' : 'Tweak'}
                         </button>
                         <button
-                          onClick={() => handleRegenScene(s.scene_index, isTweaking && isDirty ? effectiveText : null)}
+                          onClick={() => handleRegenScene(s.scene_index, isTweaking ? effectiveText : null)}
                           disabled={isRegenerating}
                           className="neo-btn-ghost flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] disabled:opacity-50"
                         >
