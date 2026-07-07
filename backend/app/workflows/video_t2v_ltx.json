@@ -43,8 +43,8 @@
   "4": {
     "inputs": {
       "lora_name": "ltx2\\gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors",
-      "strength_model": 1.0,
-      "strength_clip": 1.0,
+      "strength_model": 0.6,
+      "strength_clip": 0.6,
       "model": ["3", 0],
       "clip": ["1", 0]
     },
@@ -78,7 +78,7 @@
   },
   "7": {
     "inputs": {
-      "text": "blurry, low quality, still frame, watermark, text, distorted, ugly, deformed, jpeg artifacts, bad anatomy",
+      "text": "text, words, letters, numbers, alphabet, characters, subtitles, captions, watermark, logo, signature, username, typography, overlay, title card, text overlay, on-screen text, closed captions, inscription, label, tag, banner, credits, blurry, low quality, still frame, distorted, ugly, deformed, jpeg artifacts, bad anatomy, garbage characters, glitch text, corrupted pixels",
       "clip": ["5", 1]
     },
     "class_type": "CLIPTextEncode",

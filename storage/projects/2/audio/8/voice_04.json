@@ -1,0 +1,77 @@
+[
+  {
+    "word": "The",
+    "start": 0.102625,
+    "end": 0.286833
+  },
+  {
+    "word": "solution",
+    "start": 0.3,
+    "end": 0.839458
+  },
+  {
+    "word": "was",
+    "start": 0.852625,
+    "end": 1.0105
+  },
+  {
+    "word": "pioneering",
+    "start": 1.023666,
+    "end": 1.747332
+  },
+  {
+    "word": "sharing",
+    "start": 2.010541,
+    "end": 2.4184159999999997
+  },
+  {
+    "word": "the",
+    "start": 2.431583,
+    "end": 2.5237079999999996
+  },
+  {
+    "word": "burden",
+    "start": 2.536833,
+    "end": 2.997374
+  },
+  {
+    "word": "Multiple",
+    "start": 3.907875,
+    "end": 4.447333
+  },
+  {
+    "word": "nations",
+    "start": 4.460541,
+    "end": 4.960541
+  },
+  {
+    "word": "realized",
+    "start": 4.973666,
+    "end": 5.5920819999999996
+  },
+  {
+    "word": "they",
+    "start": 5.60525,
+    "end": 5.7105
+  },
+  {
+    "word": "needed",
+    "start": 5.723666,
+    "end": 6.052624
+  },
+  {
+    "word": "to",
+    "start": 6.065791,
+    "end": 6.157916
+  },
+  {
+    "word": "host",
+    "start": 6.171041,
+    "end": 6.499999
+  },
+  {
+    "word": "together",
+    "start": 6.513166,
+    "end": 7.092124
+  }
+]

@@ -1,0 +1,124 @@
+    async def generate_ai_video_i2v(self, prompt: str, image_filename: str, seed: int = None,
+                                     lora_name: str = None, lora_strength: float = 0.6,
+                                     width: int = 720, height: int = 1280,
+                                     video_length: int = 65,
+                                     log_meta: dict = None,
+                                     db: object = None,
+                                     check_cancel: callable = None) -> bytes:
+        if not await self.comfyui.is_connected():
+            print("ComfyUI not connected")
+            return None
+
+        lora_strength = max(0.0, min(1.5, float(lora_strength)))
+        workflow = self._load_workflow("video_i2v_ltx.json")
+        style_lora_path = self._resolve_lora(lora_name) if lora_name else None
+
+        half_w = max(64, (width // 2) // 32 * 32)
+        half_h = max(64, (height // 2) // 32 * 32)
+        length = max(9, (video_length // 8) * 8 + 1)
+
+        workflow["1"]["inputs"]["image"] = image_filename
+
+        if style_lora_path:
+            workflow["5"]["inputs"]["lora_name"] = style_lora_path
+            workflow["5"]["inputs"]["strength_model"] = lora_strength
+        else:
+            workflow["5"]["inputs"]["lora_name"] = "ltx2\\ltx-2-19b-distilled-lora-384.safetensors"
+            workflow["5"]["inputs"]["strength_model"] = 0.0
+
+        prompt_with_no_text = prompt or "cinematic motion, smooth camera movement"
+        if "purely visual" not in prompt_with_no_text.lower():
+            prompt_with_no_text += ", purely visual, blank, pristine, symbol-free"
+        workflow["8"]["inputs"]["text"] = prompt_with_no_text
+        
+        orig_neg = workflow["9"]["inputs"].get("text", "")
+        extra_neg = "text, words, letters, numbers, subtitle, watermark"
+        workflow["9"]["inputs"]["text"] = f"{extra_neg}, {orig_neg}" if orig_neg else extra_neg
+        
+        workflow["17"]["inputs"]["width"] = half_w
+        workflow["17"]["inputs"]["height"] = half_h
+        workflow["16"]["inputs"]["value"] = length
+        workflow["21"]["inputs"]["noise_seed"] = seed if seed is not None else random.randint(0, 2**32)
+        workflow["32"]["inputs"]["noise_seed"] = (seed + 1) if seed is not None else random.randint(0, 2**32)
+        workflow["43"]["inputs"]["filename_prefix"] = f"ltx_i2v_scene_{seed}"
+
+        workflow_str = json.dumps(workflow)
+        log_id = None
+        if db is not None and log_meta is not None:
+            try:
+                from app.models import PromptLog
+                from datetime import datetime
+                row = PromptLog(
+                    project_id=log_meta.get("project_id", 0) or 0,
+                    job_id=log_meta.get("job_id"),
+                    video_index=log_meta.get("video_index"),
+                    scene_index=log_meta.get("scene_index", 0),
+                    scene_number=log_meta.get("scene_number", 1),
+                    raw_visual_description=log_meta.get("raw_visual_description"),
+                    sanitized_visual_description=log_meta.get("sanitized_visual_description"),
+                    trigger_words=log_meta.get("trigger_words"),
+                    suffix=log_meta.get("suffix"),
+                    final_prompt=prompt,
+                    lora_name=lora_name,
+                    lora_strength_model=lora_strength,
+                    lora_strength_clip=0,
+                    seed=seed,
+                    width=width,
+                    height=height,
+                    frame_count=length,
+                    duration_seconds=round((length - 1) / 25.0, 2),
+                    status="running",
+                    narration_text=log_meta.get("narration_text"),
+                    created_at=datetime.utcnow(),
+                )
+                db.add(row)
+                db.commit()
+                db.refresh(row)
+                log_id = row.id
+            except Exception as e:
+                db.rollback()
+
+        try:
+            prompt_id = await self.comfyui.queue_prompt(workflow)
+            if not prompt_id:
+                if log_id:
+                    row.status = "failed"
+                    db.commit()
+                return None
+
+            print(f"[i2v] Queued prompt {prompt_id}", flush=True)
+
+            while True:
+                if check_cancel and check_cancel():
+                    return None
+                history = await self.comfyui.get_history(prompt_id)
+                if history and prompt_id in history:
+                    break
+                await asyncio.sleep(2)
+
+            outputs = history[prompt_id].get("outputs", {})
+            for node_id, output in outputs.items():
+                if "gifs" in output:
+                    for gif in output["gifs"]:
+                        if gif.get("type") == "output":
+                            filename = gif.get("filename")
+                            video_bytes = await self.comfyui.download_image(filename, subfolder=gif.get("subfolder", ""), type="output")
+                            if log_id:
+                                row.status = "completed"
+                                db.commit()
+                            return video_bytes
+            
+            if log_id:
+                row.status = "failed"
+                db.commit()
+            return None
+        except Exception as e:
+            if log_id:
+                row.status = "failed"
+                db.commit()
+            return None
+
+    async def apply_lip_sync(self, video_bytes: bytes, audio_path: str) -> bytes:
+        print(f"[Lip Sync] apply_lip_sync placeholder called. audio_path={audio_path}", flush=True)
+        # Placeholder for actual lipsync workflow execution
+        return video_bytes

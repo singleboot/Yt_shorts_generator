@@ -1,82 +1,102 @@
 [
   {
-    "word": "The",
+    "word": "Every",
     "start": 0.102625,
-    "end": 0.27366599999999996
+    "end": 0.47104100000000004
   },
   {
-    "word": "global",
-    "start": 0.286833,
-    "end": 0.721041
+    "word": "single",
+    "start": 0.484208,
+    "end": 0.839458
   },
   {
-    "word": "reach",
-    "start": 0.734208,
-    "end": 1.049999
+    "word": "tournament",
+    "start": 0.852625,
+    "end": 1.40525
   },
   {
-    "word": "required",
-    "start": 1.063166,
-    "end": 1.6157910000000002
+    "word": "brought",
+    "start": 1.418416,
+    "end": 1.707874
   },
   {
-    "word": "constant",
-    "start": 1.628958,
-    "end": 2.155291
+    "word": "with",
+    "start": 1.721041,
+    "end": 1.892082
   },
   {
-    "word": "evolution",
-    "start": 2.168416,
-    "end": 2.786832
+    "word": "it",
+    "start": 1.90525,
+    "end": 2.023666
+  },
+  {
+    "word": "immense",
+    "start": 2.036833,
+    "end": 2.4447080000000003
+  },
+  {
+    "word": "cultural",
+    "start": 2.457875,
+    "end": 2.944708
+  },
+  {
+    "word": "pressure",
+    "start": 2.957875,
+    "end": 3.4973330000000002
+  },
+  {
+    "word": "National",
+    "start": 4.407875,
+    "end": 4.973666
+  },
+  {
+    "word": "pride",
+    "start": 4.986833,
+    "end": 5.355249
+  },
+  {
+    "word": "was",
+    "start": 5.368416,
+    "end": 5.526291
+  },
+  {
+    "word": "measured",
+    "start": 5.539458,
+    "end": 5.907874
   },
   {
     "word": "in",
-    "start": 2.8,
-    "end": 2.997375
+    "start": 5.921041,
+    "end": 6.026291
   },
   {
-    "word": "rules",
-    "start": 3.010541,
-    "end": 3.392124
+    "word": "goals",
+    "start": 6.039458,
+    "end": 6.434208
   },
   {
-    "word": "and",
-    "start": 3.40525,
-    "end": 3.589458
+    "word": "scored",
+    "start": 6.447375,
+    "end": 6.842125
   },
   {
-    "word": "organization",
-    "start": 3.602625,
-    "end": 4.5105
+    "word": "on",
+    "start": 6.85525,
+    "end": 6.973666
   },
   {
-    "word": "It",
-    "start": 5.434208,
-    "end": 5.605249
+    "word": "that",
+    "start": 6.986833,
+    "end": 7.197374
   },
   {
-    "word": "became",
-    "start": 5.618416,
-    "end": 5.973666
+    "word": "sacred",
+    "start": 7.210541,
+    "end": 7.618416
   },
   {
-    "word": "a",
-    "start": 5.986833,
-    "end": 6.052624
-  },
-  {
-    "word": "truly",
-    "start": 6.065791,
-    "end": 6.473666
-  },
-  {
-    "word": "worldwide",
-    "start": 6.486833,
-    "end": 7.144708
-  },
-  {
-    "word": "fixture",
-    "start": 7.157875,
-    "end": 7.776291
+    "word": "turf",
+    "start": 7.631583,
+    "end": 8.105249
   }
 ]

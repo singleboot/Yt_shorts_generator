@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Settings, Clock, Loader2, Play, RefreshCw, Archive, Eye, X, Mic, Music, Sparkles, Trash2, Ban, StopCircle, Video, Youtube } from 'lucide-react';
+import { Send, Settings, Clock, Loader2, Play, RefreshCw, Archive, Eye, X, Mic, Music, Sparkles, Trash2, Ban, StopCircle, Video, Youtube, Edit2, Check, Layers } from 'lucide-react';
 import api from '../api/client';
 import { VOICES, MUSIC_GENRES } from '../constants/production';
 
@@ -10,10 +10,96 @@ function formatDateTime(iso) {
     + ' · ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
 
-function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onDelete, mode, onRegenScript, onRemovePlaceholder, onGenerateVideo, onCleanScenes, videoCacheBuster, requestConfirm }) {
+function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onDelete, mode, onRegenScript, onRemovePlaceholder, onGenerateVideo, onAssemble, onCleanScenes, videoCacheBuster, requestConfirm }) {
+  const { index, script, upload, job, overrides, generatingDuration } = video || {};
+  const vs = project?.visual_settings || {};
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState('');
   const [showScript, setShowScript] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editedTitle, setEditedTitle] = useState(script?.title || '');
+  const [savingTitle, setSavingTitle] = useState(false);
+  const [localProvider, setLocalProvider] = useState(overrides?.research_provider || vs.research_provider || 'duckduckgo');
+
+  useEffect(() => {
+    setLocalProvider(overrides?.research_provider || vs.research_provider || 'duckduckgo');
+  }, [overrides?.research_provider, vs.research_provider]);
+
+  useEffect(() => {
+    if (script?.title) {
+      setEditedTitle(script.title);
+    }
+  }, [script?.title]);
+
+  const handleSaveTitle = async () => {
+    if (!editedTitle.trim()) return;
+    setSavingTitle(true);
+    try {
+      await api.put(`/projects/${project.id}/videos/${video.index}/script-title`, { title: editedTitle.trim() });
+      if (script) {
+        script.title = editedTitle.trim(); // optimistic update
+      }
+      setIsEditingTitle(false);
+    } catch (e) {
+      alert('Failed to update title: ' + (e.response?.data?.detail || e.message));
+    } finally {
+      setSavingTitle(false);
+    }
+  };
+
+  const renderTitleEditor = (titleClass, iconSize = 14) => {
+    if (isEditingTitle) {
+      return (
+        <div className="flex items-center gap-1.5 w-full">
+          <input
+            type="text"
+            value={editedTitle}
+            onChange={e => setEditedTitle(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') handleSaveTitle();
+              if (e.key === 'Escape') { setIsEditingTitle(false); setEditedTitle(script?.title || ''); }
+            }}
+            className="flex-1 min-w-0 bg-[#0E1116] border border-[#C6F11D]/40 text-xs px-2 py-1 rounded outline-none text-[#F5F5F5] focus:border-[#C6F11D]"
+            disabled={savingTitle}
+            autoFocus
+          />
+          <button
+            onClick={handleSaveTitle}
+            disabled={savingTitle}
+            className="p-1 rounded bg-[rgba(198,241,29,0.12)] text-[#C6F11D] hover:bg-[rgba(198,241,29,0.2)] disabled:opacity-50"
+            title="Save subject"
+          >
+            {savingTitle ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check style={{ width: iconSize, height: iconSize }} />}
+          </button>
+          <button
+            onClick={() => { setIsEditingTitle(false); setEditedTitle(script?.title || ''); }}
+            disabled={savingTitle}
+            className="p-1 rounded bg-[rgba(255,87,87,0.1)] text-[#FF5757] hover:bg-[rgba(255,87,87,0.18)] disabled:opacity-50"
+            title="Cancel"
+          >
+            <X style={{ width: iconSize, height: iconSize }} />
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex items-center gap-1.5 group/title w-full">
+        <span className={titleClass}>
+          {script?.title || `Video ${index + 1}`}
+        </span>
+        {!isComplete && !isRunning && !video.regenerating && (
+          <button
+            onClick={() => setIsEditingTitle(true)}
+            className="opacity-0 group-hover/title:opacity-100 p-1 text-[#9AA0A6] hover:text-[#C6F11D] rounded transition-opacity"
+            title="Edit script subject"
+          >
+            <Edit2 style={{ width: iconSize, height: iconSize }} />
+          </button>
+        )}
+      </div>
+    );
+  };
 
   const handleCancel = async () => {
     if (!job?.id) return;
@@ -37,7 +123,6 @@ function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onD
     }
   };
 
-  const { index, script, upload, job, overrides, generatingDuration } = video;
   const isRunning = job?.status === 'running';
   const isComplete = job?.status === 'completed' || !!upload?.video_url;
   const isFailed = job?.status === 'failed';
@@ -47,7 +132,6 @@ function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onD
   const canPost = isComplete && upload?.status === 'queued';
   const canUpload = isComplete && (!upload || (upload && !upload.youtube_video_id));
   const isArchived = !!upload?.archived_at;
-  const vs = project.visual_settings || {};
   const displayStyle = overrides?.ai_style || vs.ai_style || 'default';
 
   const serial = script?.global_serial || video.global_serial || (index + 1);
@@ -235,13 +319,21 @@ function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onD
         </div>
         <div className="p-4 flex flex-col gap-3 flex-1">
           <div>
-            <h3 className="text-lg font-bold text-[#F5F5F5] line-clamp-2 leading-snug">
-              {script?.title || `Video ${index + 1}`}
+            <h3 className="text-lg font-bold text-[#F5F5F5] leading-snug">
+              {renderTitleEditor("line-clamp-2", 15)}
             </h3>
             {dateStr && <p className="text-sm text-[#5F6772] mt-1">{dateStr}</p>}
           </div>
           <p className="text-sm text-[#9AA0A6] line-clamp-4 leading-relaxed">
-            {script?.content?.substring(0, 300) || 'No script yet'}
+            {(() => {
+              // Show first scene's narration, not the raw concatenated content blob
+              let scenes = script?.scenes;
+              if (typeof scenes === 'string') { try { scenes = JSON.parse(scenes); } catch { scenes = null; } }
+              const first = Array.isArray(scenes) && scenes.length > 0 ? scenes[0] : null;
+              return first
+                ? (first.narration_text || first.narration || script?.content?.substring(0, 300) || 'No script yet')
+                : (script?.content?.substring(0, 300) || 'No script yet');
+            })()}
           </p>
           <div className="flex items-center gap-3 text-sm text-[#5F6772] mt-auto flex-wrap">
             <span>{script?.scenes?.length || 0} scenes</span>
@@ -260,6 +352,32 @@ function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onD
               <span className="text-[#9AA0A6]">🎼 custom prompt</span>
             )}
           </div>
+        </div>
+        <div className="px-4 pb-2.5">
+          <label className="text-[10px] text-[#9AA0A6] block mb-1 font-semibold uppercase tracking-wider">Research Source</label>
+          <select
+            value={localProvider}
+            onChange={async (e) => {
+              const val = e.target.value;
+              setLocalProvider(val);
+              try {
+                await api.put(`/projects/${project.id}/videos/${video.index}/overrides`, { research_provider: val });
+                if (video.overrides) {
+                  video.overrides.research_provider = val;
+                } else {
+                  video.overrides = { research_provider: val };
+                }
+              } catch (err) {
+                console.error("Failed to update research provider:", err);
+              }
+            }}
+            className="w-full px-2.5 py-1.5 rounded-xl bg-[#0E1116] border border-[#252A33] text-[11px] text-[#F5F5F5] outline-none focus:border-[#C6F11D]/50 transition-all"
+          >
+            <option value="duckduckgo">DuckDuckGo (Free web search)</option>
+            <option value="wikipedia">Wikipedia (Free encyclopedic search)</option>
+            <option value="tavily">Tavily AI (Paid agentic search)</option>
+            <option value="google_serper">Google Search (Paid Serper search)</option>
+          </select>
         </div>
         <div className="px-4 pb-3 flex gap-2">
           {onGenerateVideo && (
@@ -310,8 +428,9 @@ function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onD
   if (isRunning) {
     if (progress < 15) { titlebarClass = 'neo-titlebar-generating'; titlebarLabel = 'RESEARCH'; dotType = 'clip'; }
     else if (progress < 30) { titlebarClass = 'neo-titlebar-generating'; titlebarLabel = 'SCRIPT'; dotType = 'model'; }
-    else if (progress < 55) { titlebarClass = 'neo-titlebar-generating'; titlebarLabel = 'KSAMPLER'; dotType = 'latent'; }
-    else if (progress < 70) { titlebarClass = 'neo-titlebar-audio'; titlebarLabel = 'AUDIO'; dotType = 'audio'; }
+    else if (progress < 40) { titlebarClass = 'neo-titlebar-audio'; titlebarLabel = 'VOICEOVER'; dotType = 'audio'; }
+    else if (progress < 75) { titlebarClass = 'neo-titlebar-generating'; titlebarLabel = 'VIDEO (T2V)'; dotType = 'latent'; }
+    else if (progress < 85) { titlebarClass = 'neo-titlebar-audio'; titlebarLabel = 'MUSIC'; dotType = 'audio'; }
     else { titlebarClass = 'neo-titlebar-generating'; titlebarLabel = 'ASSEMBLE'; dotType = 'video'; }
   } else if (isComplete) {
     titlebarClass = 'neo-titlebar-ready';
@@ -332,6 +451,14 @@ function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onD
       {/* Titlebar */}
       <div className={`${titlebarClass} flex items-center justify-between`}>
         <span className="flex items-center gap-1.5">
+          {project?.host_image && (
+            <img 
+               src={project.host_image.startsWith('http') ? project.host_image : `http://localhost:8002/${project.host_image}`} 
+               alt="Host" 
+               className="w-5 h-5 rounded-full object-cover border border-[#252A33] shrink-0"
+               onError={(e) => { e.target.style.display = 'none'; }}
+            />
+          )}
           <span className={`neo-dot neo-dot-${dotType}`} />
           {titlebarLabel}
         </span>
@@ -368,23 +495,93 @@ function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onD
 
       {/* Conditional rendering of preview area or script text */}
       {showScript ? (
-        <div className="relative aspect-[5/8] bg-[#0A0C10] p-4 flex flex-col gap-3 overflow-y-auto border-b border-[#252A33]">
-          <div>
-            <h4 className="text-sm font-bold text-[#F5F5F5] leading-snug">
-              {script?.title || `Video ${index + 1}`}
+        <div className="relative aspect-[5/8] bg-[#0A0C10] flex flex-col border-b border-[#252A33]">
+          {/* Script header */}
+          <div className="px-4 pt-3 pb-2 border-b border-[#252A33]/60 flex-shrink-0">
+            <h4 className="text-sm font-bold text-[#F5F5F5] leading-snug line-clamp-2">
+              {script?.title || 'Script'}
             </h4>
-            {dateStr && <p className="text-[10px] text-[#5F6772] mt-0.5">{dateStr}</p>}
+            <div className="flex items-center justify-between mt-1">
+              {dateStr && <span className="text-[10px] text-[#5F6772]">{dateStr}</span>}
+              {project?.host_image && (
+                <div className="flex items-center gap-1.5 bg-[#050608] px-2 py-0.5 rounded border border-[#252A33]">
+                  <img src={project.host_image.startsWith('http') ? project.host_image : `http://localhost:8002/${project.host_image}`} alt="Host" className="w-3.5 h-3.5 rounded-full object-cover border border-[#252A33]" onError={(e) => { e.target.style.display = 'none'; }} />
+                  <span className="text-[9px] font-bold text-[#9AA0A6] uppercase tracking-wider">Vlog Host</span>
+                </div>
+              )}
+            </div>
           </div>
-          <p className="text-xs text-[#9AA0A6] leading-relaxed whitespace-pre-wrap font-sans">
-            {script?.content || 'No script content'}
-          </p>
-          <div className="mt-auto pt-2 border-t border-[#252A33]/40 text-[11px] text-[#5F6772] flex items-center justify-between">
+
+          {/* Scene list — scrollable */}
+          <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
+            {(() => {
+              // Defensively parse scenes — may arrive as JSON string from some API paths
+              let scenes = script?.scenes;
+              if (typeof scenes === 'string') {
+                try { scenes = JSON.parse(scenes); } catch { scenes = null; }
+              }
+              if (Array.isArray(scenes) && scenes.length > 0) {
+                return scenes.map((scene, idx) => (
+                  <div
+                    key={idx}
+                    className="flex gap-2.5 p-2 rounded-lg bg-[#131820] border border-[#1E2530] hover:border-[#2A3444] transition-colors"
+                  >
+                    {/* Scene number badge */}
+                    <div className="flex-shrink-0 w-5 h-5 rounded-full bg-[#1A2030] border border-[#2A3444] flex items-center justify-center mt-0.5">
+                      <span className="text-[9px] font-bold text-[#C6F11D]">
+                        {scene.scene_number || idx + 1}
+                      </span>
+                    </div>
+                    {/* Narration */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] text-[#C8CDD4] leading-relaxed">
+                        {scene.narration_text || scene.narration || '—'}
+                      </p>
+                      
+                      {/* AI Prompts Section */}
+                      {(scene.visual_description || scene.i2i_prompt) && (
+                        <div className="mt-2 space-y-1.5 p-1.5 bg-[#0A0C10] rounded border border-[#252A33]">
+                          {scene.visual_description && (
+                            <div className="text-[9px] leading-snug">
+                              <span className="text-[#C6F11D] font-bold">T2V: </span>
+                              <span className="text-[#9AA0A6]">{scene.visual_description}</span>
+                            </div>
+                          )}
+                          {scene.i2i_prompt && (
+                            <div className="text-[9px] leading-snug">
+                              <span className="text-[#FFC845] font-bold">I2V: </span>
+                              <span className="text-[#9AA0A6]">{scene.i2i_prompt}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {scene.duration_seconds && (
+                        <span className="text-[9px] text-[#5F6772] mt-1 block">
+                          {scene.duration_seconds}s
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ));
+              }
+              // Fallback: raw content if no scenes array could be parsed
+              return (
+                <p className="text-xs text-[#9AA0A6] leading-relaxed whitespace-pre-wrap font-sans">
+                  {script?.content || 'No script content'}
+                </p>
+              );
+            })()}
+          </div>
+
+          {/* Footer */}
+          <div className="px-4 py-2 border-t border-[#252A33]/40 text-[11px] text-[#5F6772] flex items-center justify-between flex-shrink-0">
             <span>{script?.scenes?.length || 0} scenes</span>
             {displayStyle && displayStyle !== 'none' && (
               <span className="text-[#C6F11D] capitalize">{displayStyle.replace(/_/g, ' ')}</span>
             )}
           </div>
         </div>
+
       ) : (
         /* Preview area */
         <div className="relative aspect-[5/8] bg-[#050608] overflow-hidden">
@@ -544,6 +741,15 @@ function VideoCard({ video, project, getStepLabel, onPost, onUpload, onEdit, onD
               title="Upload to YouTube"
             >
               <Youtube className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {onAssemble && !isComplete && video.job?.current_stage === 'scenes_t2v:done' && (
+            <button
+              onClick={() => onAssemble(video.index)}
+              className="neo-btn-secondary p-1.5"
+              title="Manually assemble/re-assemble final video"
+            >
+              <Layers className="h-3.5 w-3.5" />
             </button>
           )}
           {onGenerateVideo && !isComplete && (!video.job || video.job?.status === 'cancelled' || video.job?.status === 'failed') && (

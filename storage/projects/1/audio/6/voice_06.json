@@ -1,0 +1,77 @@
+[
+  {
+    "word": "The",
+    "start": 0.102625,
+    "end": 0.27366599999999996
+  },
+  {
+    "word": "sheer",
+    "start": 0.286833,
+    "end": 0.576291
+  },
+  {
+    "word": "infrastructure",
+    "start": 0.589458,
+    "end": 1.4447079999999999
+  },
+  {
+    "word": "needed",
+    "start": 1.457875,
+    "end": 1.8
+  },
+  {
+    "word": "to",
+    "start": 1.813166,
+    "end": 1.878957
+  },
+  {
+    "word": "host",
+    "start": 1.892125,
+    "end": 2.260541
+  },
+  {
+    "word": "it",
+    "start": 2.273666,
+    "end": 2.378916
+  },
+  {
+    "word": "grew",
+    "start": 2.392125,
+    "end": 2.668458
+  },
+  {
+    "word": "exponentially",
+    "start": 2.681583,
+    "end": 3.628958
+  },
+  {
+    "word": "Each",
+    "start": 4.552625,
+    "end": 4.881583
+  },
+  {
+    "word": "tournament",
+    "start": 4.89475,
+    "end": 5.368416
+  },
+  {
+    "word": "demanded",
+    "start": 5.381583,
+    "end": 5.907916
+  },
+  {
+    "word": "massive",
+    "start": 5.921041,
+    "end": 6.355249
+  },
+  {
+    "word": "global",
+    "start": 6.368416,
+    "end": 6.776291
+  },
+  {
+    "word": "investment",
+    "start": 6.789458,
+    "end": 7.552624
+  }
+]

@@ -275,6 +275,24 @@ def _run_migrations():
                 conn.commit()
             except Exception:
                 pass
+        # Check if prompt_logs has new I2V columns
+        prompt_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(prompt_logs)")).fetchall()]
+        if "workflow_type" not in prompt_cols:
+            try:
+                conn.execute(text("ALTER TABLE prompt_logs ADD COLUMN workflow_type VARCHAR DEFAULT 't2v'"))
+                conn.commit()
+            except Exception: pass
+        if "image_prompt" not in prompt_cols:
+            try:
+                conn.execute(text("ALTER TABLE prompt_logs ADD COLUMN image_prompt TEXT"))
+                conn.commit()
+            except Exception: pass
+        if "host_image_path" not in prompt_cols:
+            try:
+                conn.execute(text("ALTER TABLE prompt_logs ADD COLUMN host_image_path VARCHAR"))
+                conn.commit()
+            except Exception: pass
+
         # YouTube channels table - Base.metadata.create_all handles new DBs, but be safe
         tables = [row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()]
         if "jobs" in tables:
@@ -302,3 +320,27 @@ def _run_migrations():
                 conn.commit()
             except Exception:
                 pass
+        if "project_sources" not in tables:
+            try:
+                conn.execute(text("""
+                    CREATE TABLE project_sources (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+                        source_type VARCHAR NOT NULL,
+                        source_name VARCHAR NOT NULL,
+                        source_value VARCHAR NOT NULL,
+                        content TEXT,
+                        created_at DATETIME
+                    )
+                """))
+                conn.execute(text("CREATE INDEX ix_project_sources_project_id ON project_sources(project_id)"))
+                conn.commit()
+            except Exception as e:
+                print(f"[migration] Failed to create project_sources table: {e}", flush=True)
+
+        try:
+            conn.execute(text("ALTER TABLE projects ADD COLUMN host_image VARCHAR"))
+            conn.commit()
+            print("[migration] Added host_image column to projects table", flush=True)
+        except Exception:
+            pass  # column likely exists

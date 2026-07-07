@@ -1,92 +1,87 @@
 [
   {
-    "word": "Every",
+    "word": "The",
     "start": 0.102625,
-    "end": 0.47104100000000004
+    "end": 0.286833
   },
   {
-    "word": "major",
-    "start": 0.484208,
-    "end": 0.878958
+    "word": "sheer",
+    "start": 0.3,
+    "end": 0.65525
   },
   {
-    "word": "tournament",
-    "start": 0.892125,
-    "end": 1.326333
+    "word": "weight",
+    "start": 0.668416,
+    "end": 0.918416
   },
   {
-    "word": "milestone",
-    "start": 1.339458,
-    "end": 2.049999
+    "word": "of",
+    "start": 0.931583,
+    "end": 1.023708
   },
   {
-    "word": "every",
-    "start": 2.221041,
-    "end": 2.471041
-  },
-  {
-    "word": "new",
-    "start": 2.484208,
-    "end": 2.721041
-  },
-  {
-    "word": "rule",
-    "start": 2.734208,
-    "end": 3.102624
-  },
-  {
-    "word": "built",
-    "start": 3.378958,
-    "end": 3.642124
-  },
-  {
-    "word": "upon",
-    "start": 3.65525,
-    "end": 3.9447080000000003
+    "word": "expectation",
+    "start": 1.036833,
+    "end": 1.918416
   },
   {
     "word": "the",
-    "start": 3.957875,
-    "end": 4.036833
+    "start": 2.207875,
+    "end": 2.3
   },
   {
-    "word": "foundational",
-    "start": 4.05,
-    "end": 4.786833
+    "word": "hopes",
+    "start": 2.313166,
+    "end": 2.642124
   },
   {
-    "word": "spirit",
-    "start": 4.8,
-    "end": 5.207875
+    "word": "of",
+    "start": 2.65525,
+    "end": 2.734208
   },
   {
-    "word": "established",
-    "start": 5.221041,
-    "end": 5.892081999999999
+    "word": "entire",
+    "start": 2.747375,
+    "end": 3.221041
   },
   {
-    "word": "back",
-    "start": 5.90525,
-    "end": 6.181583
+    "word": "continents",
+    "start": 3.234208,
+    "end": 3.8920830000000004
   },
   {
-    "word": "in",
-    "start": 6.19475,
-    "end": 6.273708
+    "word": "was",
+    "start": 4.181583,
+    "end": 4.352624
   },
   {
-    "word": "the",
-    "start": 6.286833,
-    "end": 6.365791
+    "word": "always",
+    "start": 4.365791,
+    "end": 4.813166
   },
   {
-    "word": "early",
-    "start": 6.378958,
-    "end": 6.694749
+    "word": "carried",
+    "start": 4.826333,
+    "end": 5.247374
   },
   {
-    "word": "years",
-    "start": 6.707875,
-    "end": 7.2604999999999995
+    "word": "by",
+    "start": 5.260541,
+    "end": 5.405291
+  },
+  {
+    "word": "those",
+    "start": 5.418416,
+    "end": 5.6552489999999995
+  },
+  {
+    "word": "twenty-two",
+    "start": 5.668416,
+    "end": 6.260541
+  },
+  {
+    "word": "men",
+    "start": 6.273666,
+    "end": 6.694707
   }
 ]

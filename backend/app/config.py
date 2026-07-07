@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     # Video Defaults
     DEFAULT_WIDTH: int = 1080
     DEFAULT_HEIGHT: int = 1920
-    DEFAULT_FPS: int = 30
+    DEFAULT_FPS: int = 25
     DEFAULT_DURATION: int = 45
 
     # Aspect ratio settings: (width, height, per_scene_seconds, label)
@@ -146,6 +146,10 @@ class Settings(BaseSettings):
         "realistic": "fantasy realism, photorealistic fantasy, epic, cinematic, hyperdetailed",
         "cyberpunk": "cinematic sci-fi, cyberpunk, neon, futuristic, blade runner, dystopian",
         "comic": "golden age comic, vintage comic, halftone, retro comic, 1940s comic",
+        # New Vlog-specific base styles (No LoRA required)
+        "vlog_casual": "shot on smartphone, casual vlog, natural lighting, handheld, realistic",
+        "vlog_documentary": "documentary style, high quality, professional cinematography, cinematic",
+        "vlog_studio": "studio lighting, professional vlog setup, crisp focus, high quality, 4k",
     }
     
     # Telegram Bot

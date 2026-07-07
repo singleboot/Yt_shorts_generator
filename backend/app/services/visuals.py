@@ -36,8 +36,22 @@ class ComfyUIClient:
                     result = resp.json()
                     return result.get("name", Path(image_path).name)
         except Exception as e:
-            print(f"Image upload error: {e}")
             return Path(image_path).name
+
+    async def upload_audio(self, audio_path: str) -> str:
+        """Upload an audio file to ComfyUI for use in workflows."""
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                with open(audio_path, "rb") as f:
+                    # ComfyUI often uses the same /upload/image endpoint for all inputs, but expects 'image' key
+                    files = {"image": (Path(audio_path).name, f, "audio/wav")}
+                    data = {"type": "input", "overwrite": "true"}
+                    resp = await client.post(f"{self.host}/upload/image", data=data, files=files)
+                    result = resp.json()
+                    return result.get("name", Path(audio_path).name)
+        except Exception as e:
+            print(f"Audio upload error: {e}")
+            return Path(audio_path).name
     
     async def queue_prompt(self, workflow: dict) -> Optional[str]:
         """Submit workflow to ComfyUI queue. Returns prompt_id."""
@@ -153,7 +167,7 @@ class VisualsService:
     def _load_workflow(self, filename: str) -> dict:
         """Load workflow JSON from file."""
         workflow_path = self.workflows_dir / filename
-        with open(workflow_path, "r") as f:
+        with open(workflow_path, "r", encoding="utf-8") as f:
             return json.load(f)
     
     def _resolve_lora(self, lora_name: str) -> Optional[str]:
@@ -297,52 +311,7 @@ class VisualsService:
         
         return workflow
     
-    async def generate_ai_video(self, image_path: str, prompt: str = "",
-                                 seed: int = None) -> Optional[bytes]:
-        """Generate video from image using LTX Video."""
-        
-        if not await self.comfyui.is_connected():
-            print("ComfyUI not connected")
-            return None
-        
-        # Upload image to ComfyUI
-        image_name = await self.comfyui.upload_image(image_path)
-        
-        # Load workflow
-        workflow = self._load_workflow("video_gen_ltx.json")
-        
-        # Replace template variables (placeholders are valid JSON values)
-        workflow_str = json.dumps(workflow)
-        workflow_str = workflow_str.replace("PLACEHOLDER_INPUT_IMAGE", image_name)
-        workflow_str = workflow_str.replace("PLACEHOLDER_PROMPT", prompt or "cinematic motion, smooth camera movement")
-        workflow_str = workflow_str.replace('"seed": 0', f'"seed": {seed if seed is not None else random.randint(0, 2**32)}')
-        workflow = json.loads(workflow_str)
-        
-        # Queue prompt
-        prompt_id = await self.comfyui.queue_prompt(workflow)
-        if not prompt_id:
-            return None
-        
-        # Wait for completion (video takes longer)
-        result = await self.comfyui.wait_for_completion(prompt_id, timeout=600)
-        if not result:
-            return None
-        
-        # Extract output video
-        outputs = result.get("outputs", {})
-        for node_id, node_output in outputs.items():
-            if "gifs" in node_output or "videos" in node_output:
-                items = node_output.get("gifs", []) or node_output.get("videos", [])
-                for item_data in items:
-                    filename = item_data["filename"]
-                    subfolder = item_data.get("subfolder", "")
-                    
-                    # Download video
-                    video_bytes = await self.comfyui.get_image(filename, subfolder)
-                    if video_bytes:
-                        return video_bytes
-        
-        return None
+    
 
     async def generate_ai_video_t2v(self, prompt: str, seed: int = None,
                                      lora_name: str = None, lora_strength: float = 0.6,
@@ -407,11 +376,33 @@ class VisualsService:
                 print(f"[t2v] No style requested, using base model only (no LoRA)", flush=True)
 
         # Inject text/dims/seed at the dict level too (cleaner than string replace)
-        workflow["6"]["inputs"]["text"] = prompt or "cinematic motion, smooth camera movement"
+        prompt_with_no_text = prompt or "cinematic motion, smooth camera movement"
+        # Always append strong anti-text tokens — LTX's Gemma encoder is sensitive to
+        # these appearing explicitly even if the base prompt already says "no text".
+        if "purely visual" not in prompt_with_no_text.lower():
+            prompt_with_no_text += (
+                ", purely visual, blank, pristine, symbol-free"
+            )
+        workflow["6"]["inputs"]["text"] = prompt_with_no_text
+        
+        # Comprehensive negative guidance — CFG=1 distilled models mostly ignore negatives
+        # but the Gemma text encoder still conditions on them for the positive embed direction.
+        orig_neg = workflow["7"]["inputs"].get("text", "")
+        extra_neg = (
+            "text, words, letters, numbers, alphabet, characters, subtitles, captions, "
+            "watermark, logo, signature, username, typography, overlay, title card, "
+            "text overlay, on-screen text, closed captions, inscription, label, tag, "
+            "banner, credits, garbage characters, glitch text, corrupted pixels, "
+            "random symbols, hieroglyphics, garbled text"
+        )
+        # Put anti-text at the START of the negative so it gets priority token weighting
+        workflow["7"]["inputs"]["text"] = f"{extra_neg}, {orig_neg}" if orig_neg else extra_neg
+        
         workflow["9"]["inputs"]["width"] = half_w
         workflow["9"]["inputs"]["height"] = half_h
         workflow["9"]["inputs"]["length"] = length
         workflow["10"]["inputs"]["noise_seed"] = seed if seed is not None else random.randint(0, 2**32)
+        workflow["11"]["inputs"]["cfg"] = 1.0  # Must be 1.0 for distilled LTX to prevent video freezing
         workflow["21"]["inputs"]["filename_prefix"] = f"ltx_t2v_scene_{seed}"
 
         # Serialize to JSON for queue submission
@@ -451,6 +442,7 @@ class VisualsService:
                         trigger_words=log_meta.get("trigger_words"),
                         suffix=log_meta.get("suffix"),
                         final_prompt=prompt,
+                        workflow_type="t2v",
                         lora_name=lora_name,
                         lora_strength_model=lora_strength,
                         lora_strength_clip=round(lora_strength * 0.75, 3),
@@ -533,7 +525,7 @@ class VisualsService:
                     pass
 
         # Wait for completion (video takes longer)
-        result = await self.comfyui.wait_for_completion(prompt_id, timeout=3600, check_cancel=check_cancel)
+        result = await self.comfyui.wait_for_completion(prompt_id, timeout=7200, check_cancel=check_cancel)
         if not result:
             if log_id is not None and db is not None:
                 try:
@@ -606,7 +598,7 @@ class VisualsService:
 
     async def generate_scene_videos(self, scenes: List[Dict], project_dir: Path,
                                       lora_name: str = None, lora_strength: float = 0.6,
-                                      style_key: str = None,
+                                      style_key: str = None, host_image: str = None, audio_map: Dict[int, str] = None,
                                       project_id: int = 0, video_index: int = 0,
                                       job_id: int = None,
                                       db: Optional[object] = None,
@@ -619,6 +611,9 @@ class VisualsService:
             project_dir: Where to save scene_NN.mp4 files
             lora_name: Optional LoRA filename (currently ignored - workflow has fixed LoRAs)
             lora_strength: LoRA strength (currently ignored)
+            style_key: Optional style key mapping
+            host_image: Filename of the host image (used for I2V).
+            audio_map: Mapping from scene index to audio path.
             project_id: For deterministic seed
             video_index: For deterministic seed
             job_id: For PromptLog row linkage
@@ -676,10 +671,16 @@ class VisualsService:
             if scene_duration > aspect_per_scene:
                 scene_duration = aspect_per_scene
             duration = scene_duration
-            # Convert duration to frames at 25fps, clamp to LTX max of ~250 frames
-            video_length = min(int(duration * 25) + 1, 250)
+            # Audio-first: scene_duration now reflects real TTS audio length.
+            # Add a +1s handle so LTX renders slightly more frames than needed —
+            # assembly trims the handle cleanly rather than freeze-padding a short clip.
+            handle = 1.0
+            render_duration = min(duration + handle, aspect_per_scene + handle)
+            # Convert to frames at 25fps, clamp to LTX max of ~250 frames
+            video_length = min(int(render_duration * 25) + 1, 250)
             # Ensure frame count is (n*8+1) per LTX requirements
             video_length = max(9, (video_length // 8) * 8 + 1)
+
 
             # Deterministic seed
             # Allow a per-project offset for per-scene regeneration. If the
@@ -753,8 +754,9 @@ class VisualsService:
                 aspect_term = "vertical 9:16, cinematic lighting, 720x1280 resolution"
 
             prompt = (
-                f"{trigger_prefix}{base_prompt}, 25fps, high quality, "
-                f"{aspect_term}, no text, no captions, no subtitles, no watermark, no overlay, clean video"
+                f"{trigger_prefix}{base_prompt}, "
+                f"25fps, high quality, "
+                f"{aspect_term}, cinematic, clear"
             )
 
             if on_progress:
@@ -777,18 +779,61 @@ class VisualsService:
                     "narration_text": scene.get("narration_text") or scene.get("narration"),
                 }
 
-            mp4_bytes = await self.generate_ai_video_t2v(
-                prompt=prompt,
-                seed=seed,
-                lora_name=lora_name,
-                lora_strength=lora_strength,
-                width=width,
-                height=height,
-                video_length=video_length,
-                log_meta=log_meta,
-                db=db,
-                check_cancel=is_cancelled,
-            )
+            scene_type = scene.get("scene_type")
+
+            if scene_type == "host_talking" and host_image:
+                host_path = settings.STORAGE_DIR / "hosts" / host_image
+                if host_path.exists():
+                    uploaded_image = await self.comfyui.upload_image(str(host_path))
+                    
+                    audio_filename = None
+                    if audio_map and (i in audio_map):
+                        audio_filename = await self.comfyui.upload_audio(audio_map[i])
+                    if not audio_filename:
+                        # Upload fallback silent audio to prevent I2V workflow failure
+                        audio_filename = await self.comfyui.upload_audio("silent.wav")
+
+                    i2i_prompt = scene.get("i2i_prompt", "")
+                    ambient_sounds = scene.get("ambient_sounds", "")
+                    narration_text = scene.get("narration_text", "")
+
+                    mp4_bytes = await self.generate_ai_video_i2v(
+                        prompt=prompt,
+                        image_filename=uploaded_image,
+                        audio_filename=audio_filename,
+                        i2i_prompt=i2i_prompt,
+                        narration_text=narration_text,
+                        ambient_sounds=ambient_sounds,
+                        duration_seconds=duration,
+                        seed=seed,
+                        lora_name=lora_name,
+                        lora_strength=lora_strength,
+                        width=width,
+                        height=height,
+                        log_meta=log_meta,
+                        db=db,
+                        check_cancel=is_cancelled,
+                    )
+                else:
+                    print(f"Host image {host_image} not found. Falling back to T2V.", flush=True)
+                    mp4_bytes = await self.generate_ai_video_t2v(
+                        prompt=prompt, seed=seed, lora_name=lora_name, lora_strength=lora_strength,
+                        width=width, height=height, video_length=video_length, log_meta=log_meta,
+                        db=db, check_cancel=is_cancelled
+                    )
+            else:
+                mp4_bytes = await self.generate_ai_video_t2v(
+                    prompt=prompt,
+                    seed=seed,
+                    lora_name=lora_name,
+                    lora_strength=lora_strength,
+                    width=width,
+                    height=height,
+                    video_length=video_length,
+                    log_meta=log_meta,
+                    db=db,
+                    check_cancel=is_cancelled,
+                )
 
             # Cancellation check after each scene finishes (which can take minutes)
             if is_cancelled and is_cancelled():
@@ -878,6 +923,35 @@ class VisualsService:
             r"\b(sepia tone)\b",
             r"\b(sepia)\b",
             r"\b(quick cut to)\b",
+            # Text-rendering phrases LLMs sneak in that make LTX generate on-screen characters
+            r"\b(text overlay[s]?)\b",
+            r"\b(on.?screen text)\b",
+            r"\b(score overlay)\b",
+            r"\b(scoreline overlay)\b",
+            r"\b(score graphic[s]?)\b",
+            r"\b(stat graphic[s]?)\b",
+            r"\b(statistics overlay)\b",
+            r"\b(graphic displaying)\b",
+            r"\b(graphic showing)\b",
+            r"\b(displaying the score)\b",
+            r"\b(showing the score)\b",
+            r"\b(subtitle[s]?)\b",
+            r"\b(caption[s]?)\b",
+            r"\b(watermark)\b",
+            r"\b(logo overlay)\b",
+            r"\b(ticker tape)\b",
+            r"\b(lower third[s]?)\b",
+            r"\b(chyron)\b",
+            r"\b(text on screen)\b",
+            r"\b(on screen graphics?)\b",
+            r"\b(newspaper)\b",
+            r"\b(billboard)\b",
+            r"\b(signboard)\b",
+            r"\b(poster)\b",
+            r"\b(document)\b",
+            r"\b(jersey number[s]?)\b",
+            r"\b(name tag)\b",
+            r"\b(writing)\b",
         ]
         for pat in bad_words:
             d = re.sub(pat, "", d, flags=re.IGNORECASE)
@@ -1180,5 +1254,157 @@ class VisualsService:
                 "folder": str(Path(lora_path).parent) if Path(lora_path).parent != Path(".") else ""
             })
         return loras
+
+
+    async def generate_ai_video_i2v(self, prompt: str, image_filename: str, audio_filename: str,
+                                     i2i_prompt: str, narration_text: str, ambient_sounds: str,
+                                     duration_seconds: float, seed: int = None,
+                                     lora_name: str = None, lora_strength: float = 0.6,
+                                     width: int = 720, height: int = 1280,
+                                     log_meta: dict = None,
+                                     db: object = None,
+                                     check_cancel: callable = None) -> bytes:
+        if not await self.comfyui.is_connected():
+            print("ComfyUI not connected")
+            return None
+
+        lora_strength = max(0.0, min(1.5, float(lora_strength)))
+        workflow = self._load_workflow("Workflow-1 ltx2.3 idlora_v2.json")
+        style_lora_path = self._resolve_lora(lora_name) if lora_name else None
+        
+        if style_lora_path and "568" in workflow:
+            # Power Lora Loader supports arbitrary lora_N keys
+            workflow["568"]["inputs"]["lora_7"] = {
+                "on": True,
+                "lora": style_lora_path,
+                "strength": lora_strength
+            }
+            print(f"[i2v] Injecting style LoRA: {style_lora_path} @ strength={lora_strength}", flush=True)
+
+        # Calculate exact frames needed, though the workflow expects seconds
+        length = max(9, (int(duration_seconds * 25) // 8) * 8 + 1)
+
+        # 1. Image
+        if "573" in workflow:
+            workflow["573"]["inputs"]["image"] = image_filename
+            
+        # 2. Audio
+        if "276" in workflow and audio_filename:
+            workflow["276"]["inputs"]["audio"] = audio_filename
+
+        # 3. Duration
+        if "540" in workflow:
+            workflow["540"]["inputs"]["value"] = duration_seconds
+
+        # 4. Prompts
+        # Node 579: Image Prompt
+        if "579" in workflow:
+            img_prompt = i2i_prompt or "A cinematic shot of a vlog host."
+            workflow["579"]["inputs"]["text"] = img_prompt
+            print(f"[i2v unified] Image Prompt: {img_prompt}", flush=True)
+            
+        # Node 507: Video Prompt (Formatted with Audio triggers)
+        video_prompt_formatted = f"[VISUAL]: {prompt}\n\n[SPEECH]: {narration_text or '...'}\n\n[SOUNDS]: {ambient_sounds or 'Natural ambient sounds.'}"
+        if "507" in workflow:
+            workflow["507"]["inputs"]["text"] = video_prompt_formatted
+
+        # Force 9:16 crop in ImageResizeKJv2 (override link from 577)
+        if "477" in workflow:
+            workflow["477"]["inputs"]["keep_proportion"] = "cover"
+            workflow["477"]["inputs"]["width"] = width
+            workflow["477"]["inputs"]["height"] = height
+
+        # Set seeds (nodes 356, 357 are RandomNoise)
+        base_seed = seed if seed is not None else random.randint(0, 2**32)
+        if "356" in workflow:
+            workflow["356"]["inputs"]["noise_seed"] = base_seed
+        if "357" in workflow:
+            workflow["357"]["inputs"]["noise_seed"] = base_seed + 1
+
+        workflow_str = json.dumps(workflow)
+        log_id = None
+        if db is not None and log_meta is not None:
+            try:
+                from app.models import PromptLog
+                from datetime import datetime
+                row = PromptLog(
+                    project_id=log_meta.get("project_id", 0) or 0,
+                    job_id=log_meta.get("job_id"),
+                    video_index=log_meta.get("video_index"),
+                    scene_index=log_meta.get("scene_index", 0),
+                    scene_number=log_meta.get("scene_number", 1),
+                    raw_visual_description=log_meta.get("raw_visual_description"),
+                    sanitized_visual_description=log_meta.get("sanitized_visual_description"),
+                    trigger_words=log_meta.get("trigger_words"),
+                    suffix=log_meta.get("suffix"),
+                    final_prompt=video_prompt_formatted,
+                    workflow_type="i2v",
+                    image_prompt=i2i_prompt or "A cinematic shot of a vlog host.",
+                    host_image_path=image_filename,
+                    lora_name=lora_name,
+                    lora_strength_model=lora_strength,
+                    lora_strength_clip=0,
+                    seed=base_seed,
+                    width=width,
+                    height=height,
+                    frame_count=length,
+                    duration_seconds=round((length - 1) / 25.0, 2),
+                    status="running",
+                    narration_text=log_meta.get("narration_text"),
+                    created_at=datetime.utcnow(),
+                )
+                db.add(row)
+                db.commit()
+                db.refresh(row)
+                log_id = row.id
+            except Exception as e:
+                db.rollback()
+
+        try:
+            prompt_id = await self.comfyui.queue_prompt(workflow)
+            if not prompt_id:
+                if log_id:
+                    row.status = "failed"
+                    db.commit()
+                return None
+
+            print(f"[i2v unified] Queued prompt {prompt_id}", flush=True)
+
+            while True:
+                if check_cancel and check_cancel():
+                    return None
+                history = await self.comfyui.get_history(prompt_id)
+                if history and prompt_id in history:
+                    break
+                import asyncio
+                await asyncio.sleep(2)
+
+            outputs = history[prompt_id].get("outputs", {})
+            for node_id, output in outputs.items():
+                if "gifs" in output:
+                    for gif in output["gifs"]:
+                        if gif.get("type") == "output":
+                            filename = gif.get("filename")
+                            video_bytes = await self.comfyui.get_image(filename, subfolder=gif.get("subfolder", ""), folder_type="output")
+                            if log_id:
+                                row.status = "completed"
+                                db.commit()
+                            return video_bytes
+            
+            if log_id:
+                row.status = "failed"
+                db.commit()
+            return None
+        except Exception as e:
+            print(f"Error in unified workflow: {e}")
+            if log_id:
+                row.status = "failed"
+                db.commit()
+            return None
+
+    async def apply_lip_sync(self, video_bytes: bytes, audio_path: str) -> bytes:
+        print(f"[Lip Sync] apply_lip_sync placeholder called. audio_path={audio_path}", flush=True)
+        # Placeholder for actual lipsync workflow execution
+        return video_bytes
 
 visuals_service = VisualsService()

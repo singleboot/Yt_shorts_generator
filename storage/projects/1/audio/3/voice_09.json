@@ -2,96 +2,101 @@
   {
     "word": "And",
     "start": 0.102625,
-    "end": 0.326291
+    "end": 0.313166
+  },
+  {
+    "word": "when",
+    "start": 0.326333,
+    "end": 0.48420799999999997
+  },
+  {
+    "word": "history",
+    "start": 0.497375,
+    "end": 0.931583
+  },
+  {
+    "word": "demands",
+    "start": 0.94475,
+    "end": 1.418416
+  },
+  {
+    "word": "it",
+    "start": 1.431583,
+    "end": 1.602624
   },
   {
     "word": "that",
-    "start": 0.339458,
-    "end": 0.576291
+    "start": 1.826333,
+    "end": 2.049999
   },
   {
-    "word": "raw",
-    "start": 0.589458,
-    "end": 0.747333
+    "word": "beautiful",
+    "start": 2.063166,
+    "end": 2.523707
   },
   {
-    "word": "passion",
-    "start": 0.760541,
-    "end": 1.2999990000000001
-  },
-  {
-    "word": "from",
-    "start": 1.497375,
-    "end": 1.668416
-  },
-  {
-    "word": "dusty",
-    "start": 1.681583,
-    "end": 2.102624
-  },
-  {
-    "word": "pitches",
-    "start": 2.115791,
-    "end": 2.5368320000000004
-  },
-  {
-    "word": "in 1930",
-    "start": 2.55,
-    "end": 3.4710829999999997
-  },
-  {
-    "word": "to",
-    "start": 3.484208,
-    "end": 3.602624
-  },
-  {
-    "word": "massive",
-    "start": 3.615791,
-    "end": 4.023666
-  },
-  {
-    "word": "stadiums",
-    "start": 4.036833,
-    "end": 4.615791
-  },
-  {
-    "word": "today",
-    "start": 4.628958,
-    "end": 5.063166
-  },
-  {
-    "word": "remains",
-    "start": 5.44475,
-    "end": 5.852625
-  },
-  {
-    "word": "the",
-    "start": 5.865791,
-    "end": 5.984207
-  },
-  {
-    "word": "unbreakable",
-    "start": 5.997375,
-    "end": 6.707916
-  },
-  {
-    "word": "core",
-    "start": 6.721041,
-    "end": 6.997374
+    "word": "combination",
+    "start": 2.536833,
+    "end": 3.2078740000000003
   },
   {
     "word": "of",
-    "start": 7.010541,
-    "end": 7.089499
+    "start": 3.221041,
+    "end": 3.326291
   },
   {
-    "word": "the",
-    "start": 7.102625,
-    "end": 7.181583
+    "word": "skill",
+    "start": 3.339458,
+    "end": 3.668416
   },
   {
-    "word": "game",
-    "start": 7.19475,
-    "end": 7.655291
+    "word": "and",
+    "start": 3.681583,
+    "end": 3.7868329999999997
+  },
+  {
+    "word": "sheer",
+    "start": 3.8,
+    "end": 4.19475
+  },
+  {
+    "word": "will",
+    "start": 4.207875,
+    "end": 4.365749999999999
+  },
+  {
+    "word": "erupts",
+    "start": 4.378958,
+    "end": 4.839499
+  },
+  {
+    "word": "in",
+    "start": 4.852625,
+    "end": 4.997375
+  },
+  {
+    "word": "one",
+    "start": 5.010541,
+    "end": 5.299999
+  },
+  {
+    "word": "unforgettable",
+    "start": 5.313166,
+    "end": 6.010541
+  },
+  {
+    "word": "moment",
+    "start": 6.023666,
+    "end": 6.365791000000001
+  },
+  {
+    "word": "of",
+    "start": 6.378958,
+    "end": 6.444749
+  },
+  {
+    "word": "victory",
+    "start": 6.457875,
+    "end": 7.0236659999999995
   }
 ]

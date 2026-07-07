@@ -13,8 +13,18 @@ SPEAKER_MAP = {
     "sohee":    ("Sohee",    "Female"),
     "uncle_fu": ("Uncle Fu", "Male"),
     "vivian":   ("Vivian",   "Female"),
+    "kokoro-af_heart": ("Kokoro Heart", "Female"),
+    "kokoro-af_bella": ("Kokoro Bella", "Female"),
+    "kokoro-af_nicole": ("Kokoro Nicole", "Female"),
+    "kokoro-af_sarah": ("Kokoro Sarah", "Female"),
+    "kokoro-af_sky": ("Kokoro Sky", "Female"),
+    "kokoro-am_adam": ("Kokoro Adam", "Male"),
+    "kokoro-am_fenrir": ("Kokoro Fenrir", "Male"),
+    "kokoro-am_puck": ("Kokoro Puck", "Male"),
+    "kokoro-bf_emma": ("Kokoro Emma", "Female"),
+    "kokoro-bm_george": ("Kokoro George", "Male"),
 }
-SPEAKER_DEFAULT = ("Ryan", "Male")
+SPEAKER_DEFAULT = ("Kokoro Adam", "Male")
 
 GENRE_HINTS = {
     "Ambient": "Use calm, atmospheric, slow-moving background music with soft pads and gentle textures.",
@@ -52,7 +62,8 @@ class ScriptService:
                               duration: int = 45, style: str = "engaging",
                               voice_id: str = None, music_genre: str = None,
                               voice_custom: str = None, music_custom: str = None,
-                              prev_scripts_context: str = "") -> Dict:
+                              prev_scripts_context: str = "",
+                              is_vlog: bool = False) -> Dict:
         """Generate a full script with scenes using Ollama."""
 
         # Scene pacing. The user's requested total duration is split into:
@@ -101,13 +112,13 @@ class ScriptService:
             category_instruction = (
                 "This is a HISTORY video. You MUST write a historical narrative about the subject. "
                 "Frame the topic with rich historical context: cover the origins, compare past history to the present "
-                "(e.g., contrast past tournaments, historical statistics, or past records with the subject), "
+                "(e.g., contrast past eras, historical milestones, or past records with the subject), "
                 "detail key historical events, evolution over time, and its historical significance. "
                 "CRITICAL FOR HISTORY TONE:\n"
                 "- Do NOT write a purely contemporary news-style description, current qualifiers breakdown, or modern overview.\n"
-                "- At least 70% of the narration MUST cover the historical backstory, origins, and past evolution (mentioning specific past years, tournaments, e.g. 1930, 1982, 1998, past milestones, or former legends) of the subject.\n"
-                "- The narration MUST sound like a professional, high-quality historical documentary narrator (e.g. 'For nearly a century...', 'Historically, the journey began in...', 'Legendary squads of the past...').\n"
-                "- Only refer to the modern/present event (like World Cup 2026) as a brief comparison or resolution at the end of the script."
+                "- At least 70% of the narration MUST cover the historical backstory, origins, and past evolution (mentioning specific past years, eras, historical figures, or former milestones) of the subject.\n"
+                "- The narration MUST sound like a professional, high-quality historical documentary narrator (e.g. 'For centuries...', 'Historically, the journey began in...', 'Legendary figures of the past...').\n"
+                "- Only refer to the modern/present event as a brief comparison or resolution at the end of the script."
             )
         elif category.lower() in ("children story", "children's story", "kids story", "kids", "children"):
             category_instruction = "This is a CHILDREN'S STORY. Write a whimsical, age-appropriate story with simple language, fun characters, clear moral/lesson, and imaginative scenes. NOT a factual documentary."
@@ -168,12 +179,12 @@ CANNOT render well — DO NOT USE:
 - Any text, words, labels, signs, alphabets, letters, or subtitles. The video frames MUST be strictly visual without any textual characters. All captions/text are burned-in separately.
 
 EVERY visual_description must follow this template:
-"[Camera move] of [single specific subject] in [specific location/setting], [doing one clear action or held pose], [lighting], [mood/style], [any style LoRA triggers if relevant], high detail, cinematic, 9:16 vertical"
+"[Camera move] of [single specific subject] in [specific location/setting], [subject's spatial relationship to background], [doing one clear action or held pose], [sensory details: texture, material, surface], [lighting], [mood/style], [any style LoRA triggers if relevant], high detail, cinematic, 9:16 vertical"
 
 GOOD visual_description examples:
-- "Slow push-in on a lone football player standing at the center spot of a floodlit stadium pitch at twilight, head bowed, ball at his feet, dramatic backlight, cinematic mood, 9:16 vertical, high detail"
-- "Slow orbit around an ancient leather football resting on dewy grass with morning light filtering through, shallow depth of field, warm golden tones, 9:16 vertical"
-- "Static wide shot of a roaring stadium crowd holding scarves aloft under bright floodlights, confetti mid-air, vibrant high-contrast color, cinematic 9:16 vertical"
+- "Slow push-in on a lone football player standing in the left foreground of a floodlit stadium pitch at twilight, the background out of focus, head bowed, ball at his feet, crisp fabric of his jersey, dramatic backlight, cinematic mood, 9:16 vertical, high detail"
+- "Slow orbit around an ancient leather football resting on dewy grass with morning light filtering through, shallow depth of field, rough leather texture, warm golden tones, 9:16 vertical"
+- "Static wide shot of a roaring stadium crowd holding scarves aloft under bright floodlights in the background, confetti mid-air, vibrant high-contrast color, cinematic 9:16 vertical"
 
 BAD visual_description examples (NEVER do this):
 - "Montage of historical football moments"  ← abstract montage
@@ -220,6 +231,29 @@ LONG-FORM 4-ACT STRUCTURE (this is a {duration}s long-form video, plan acts care
 
 Make sure each act has a clear tonal shift (not just more of the same)."""
 
+        vlog_block = ""
+        if is_vlog:
+            vlog_block = """
+VLOG STYLE REQUIREMENTS:
+This is a "Vlog" style video where a host narrating the story is visible on screen.
+You MUST add a "scene_type" field to each scene. It must be either "host_talking" or "b_roll".
+- "host_talking" scenes must have a visual_description that starts with "A vlog-style shot of a host speaking to the camera..." (or similar) and MUST be exactly 100% focused on the host narrating.
+- "host_talking" scenes MUST also include an "i2i_prompt" describing the background location AND the specific clothing/attire the host should be wearing to match the story's context (e.g., "medieval streets of Toledo, sandstone buildings, host wearing a rustic linen tunic and leather armor").
+- "b_roll" scenes must illustrate the subject matter being discussed (standard LTX 2.3 guidelines apply) and should have an empty "i2i_prompt".
+- All scenes MUST include an "ambient_sounds" field detailing the specific background noises (e.g., "market chatter, footsteps, horses, birds").
+- Alternate between "host_talking" and "b_roll" scenes. The first scene MUST be "host_talking".
+"""
+
+        scene_fields = f"""   - scene_number (1 to {num_scenes})
+   - visual_description (FOLLOW THE TEMPLATE IN SYSTEM PROMPT — single subject, one action, one camera move, specific lighting; NEVER use montage/calendar/archival/etc.)
+   - narration_text ({narration_min}-{narration_max} words, fits ~{per_scene} seconds spoken)
+   - duration_seconds ({per_scene})"""
+        if is_vlog:
+            scene_fields += """
+   - scene_type (MUST be "host_talking" or "b_roll")
+   - i2i_prompt (Required for host_talking, empty for b_roll)
+   - ambient_sounds (Required)"""
+
         prompt = f"""Write a YouTube Shorts script about: {topic}
 Category: {category}
 Target Duration: {duration} seconds
@@ -233,10 +267,7 @@ Research Context:
 Requirements:
 1. HOOK: The first 3 seconds must grab attention with a striking question, surprising fact, or bold claim
 2. SCENES: Include EXACTLY {num_scenes} scenes, each {per_scene} seconds (total ~{duration}s). Each scene must have:
-   - scene_number (1 to {num_scenes})
-   - visual_description (FOLLOW THE TEMPLATE IN SYSTEM PROMPT — single subject, one action, one camera move, specific lighting; NEVER use montage/calendar/archival/etc.)
-   - narration_text ({narration_min}-{narration_max} words, fits ~{per_scene} seconds spoken)
-   - duration_seconds ({per_scene})
+{scene_fields}
 3. VISUAL CONTINUITY: Pick 2-3 recurring visual anchors (e.g., "stadium at twilight", "vintage leather ball", "lone player") and use them across multiple scenes
 4. CAMERA VARIETY: Each scene must use a DIFFERENT camera move from this set: slow push-in, slow pan, slow dolly forward, slow orbit, slow zoom, static wide, slow tilt up
 5. CLIMAX: Scene {num_scenes - 1} must be visually the most dramatic (e.g., a goal scored, a trophy lifted, a crowd erupting)
@@ -253,6 +284,8 @@ Requirements:
 
 {long_form_block}
 
+{vlog_block}
+
 Respond ONLY in valid JSON. No markdown, no commentary, no code blocks — just raw JSON:
 
 {{
@@ -261,11 +294,11 @@ Respond ONLY in valid JSON. No markdown, no commentary, no code blocks — just 
   "hashtags": ["#tag1", "#tag2", ...],
   "hook": "...",
   "scenes": [
-    {{"scene_number": 1, "visual_description": "Slow push-in on ...", "narration_text": "...", "duration_seconds": {per_scene}}},
-    {{"scene_number": 2, "visual_description": "Slow pan across ...", "narration_text": "...", "duration_seconds": {per_scene}}},
+    {{"scene_number": 1, "scene_type": "host_talking", "visual_description": "Slow push-in on ...", "i2i_prompt": "Background location...", "ambient_sounds": "outdoor market, distant chatter...", "narration_text": "...", "duration_seconds": {per_scene}}},
+    {{"scene_number": 2, "scene_type": "b_roll", "visual_description": "Slow pan across ...", "i2i_prompt": "", "ambient_sounds": "whoosh, dramatic hit...", "narration_text": "...", "duration_seconds": {per_scene}}},
     ...
-    {{"scene_number": {num_scenes - 1}, "visual_description": "Fast push-in on the climactic moment ...", "narration_text": "...", "duration_seconds": {per_scene}}},
-    {{"scene_number": {num_scenes}, "visual_description": "Slow wide shot of ... contemplative closing image", "narration_text": "Reflective conclusion. Like and subscribe for more!", "duration_seconds": {per_scene}}}
+    {{"scene_number": {num_scenes - 1}, "scene_type": "b_roll", "visual_description": "Fast push-in on the climactic moment ...", "i2i_prompt": "", "ambient_sounds": "crowd roaring...", "narration_text": "...", "duration_seconds": {per_scene}}},
+    {{"scene_number": {num_scenes}, "scene_type": "b_roll", "visual_description": "Slow wide shot of ... contemplative closing image", "i2i_prompt": "", "ambient_sounds": "gentle wind, birds...", "narration_text": "Reflective conclusion. Like and subscribe for more!", "duration_seconds": {per_scene}}}
   ],
   "call_to_action": "Like and subscribe for more!",
   "music_prompt": "genre, mood, instruments, BPM, key"
@@ -281,7 +314,12 @@ This is part of a multi-video batch. To prevent duplicate videos, the following 
 You MUST generate a completely unique script. Do NOT reuse the same hooks, key facts, stories, visual descriptions, or phrasing from the scripts shown above. Focus on completely different aspects, angles, or facts!
 """
 
+        self.current_is_vlog = is_vlog
+
         response = await research_service._ollama_generate(prompt, system_prompt)
+        
+        if not response:
+            raise ValueError("Ollama returned an empty response. It may have timed out or crashed.")
 
         # Try to parse JSON from response
         try:
@@ -301,10 +339,30 @@ You MUST generate a completely unique script. Do NOT reuse the same hooks, key f
             # and forget the call-to-action. We append/strengthen it here so
             # the user always hears a clear Like/Subscribe/bell sign-off.
             script_data = self._enforce_final_cta(script_data, topic=topic, category=category)
+
+            # Sanitize all texts in script_data
+            if "hook" in script_data and isinstance(script_data["hook"], str):
+                script_data["hook"] = self._sanitize_text(script_data["hook"])
+            if "description" in script_data and isinstance(script_data["description"], str):
+                script_data["description"] = self._sanitize_text(script_data["description"])
+            if "scenes" in script_data and isinstance(script_data["scenes"], list):
+                for i, s in enumerate(script_data["scenes"]):
+                    if isinstance(s, dict):
+                        if "narration_text" in s and isinstance(s["narration_text"], str):
+                            s["narration_text"] = self._sanitize_text(s["narration_text"])
+                        if is_vlog:
+                            expected_type = "host_talking" if i % 2 == 0 else "b_roll"
+                            s["scene_type"] = expected_type
+                            if expected_type == "host_talking":
+                                if "vlog-style shot" not in s.get("visual_description", "").lower():
+                                    s["visual_description"] = f"A vlog-style shot of a host speaking to the camera about {topic}"
+                                if not s.get("i2i_prompt"):
+                                    s["i2i_prompt"] = "A clean, well-lit vlog studio background"
+
             return script_data
         except json.JSONDecodeError:
             # Fallback: return raw text structured manually
-            return self._fallback_parse_script(response, topic, num_scenes, per_scene)
+            return self._fallback_parse_script(response, topic, num_scenes, per_scene, style, is_vlog)
 
     def _topup_scenes(self, script_data: Dict, num_scenes: int, per_scene: int,
                       topic: str, category: str) -> Dict:
@@ -339,9 +397,15 @@ You MUST generate a completely unique script. Do NOT reuse the same hooks, key f
                 f"Continuing the story of {topic} as we explore another "
                 f"fascinating detail in this ongoing journey."
             )
+            is_vlog = getattr(self, "current_is_vlog", False)
+            scene_type = "host_talking" if is_vlog and i % 2 == 0 else "b_roll"
+            
             scenes.append({
                 "scene_number": i + 1,
-                "visual_description": cam_desc,
+                "scene_type": scene_type,
+                "visual_description": f"A vlog-style shot of a host speaking to the camera about {topic}" if scene_type == "host_talking" else cam_desc,
+                "i2i_prompt": "A clean, well-lit vlog studio background" if scene_type == "host_talking" else "",
+                "ambient_sounds": "gentle background noise",
                 "narration_text": narration,
                 "duration_seconds": per_scene,
             })
@@ -410,23 +474,67 @@ Respond in JSON format with keys: title, description, tags, hashtags"""
                 "hashtags": ["#shorts", "#facts", f"#{category}", "#viral", "#trending"]
             }
     
-    def _fallback_parse_script(self, text: str, topic: str, num_scenes: int = 4, per_scene: int = 6) -> Dict:
+    def _sanitize_text(self, text: str) -> str:
+        if not text:
+            return text
+        text = text.strip()
+        
+        # Clean up JSON formatting artifacts if present
+        if text.startswith('"') and text.endswith('"'):
+            text = text[1:-1].strip()
+        elif text.startswith('"'):
+            text = text[1:].strip()
+        elif text.endswith('"'):
+            text = text[:-1].strip()
+            
+        text = text.rstrip(',}:; ')
+        text = text.lstrip('{: ')
+        
+        if not text:
+            return text
+            
+        # Check if the text ends with valid sentence/clause punctuation or quotes.
+        terminal_punctuations = ('.', '!', '?', '"', "'", '”', '’')
+        if text.endswith(terminal_punctuations):
+            return text
+            
+        # Try to find the last occurrence of '.', '!', '?'
+        last_punc_idx = -1
+        for char in ('.', '!', '?'):
+            idx = text.rfind(char)
+            if idx > last_punc_idx:
+                last_punc_idx = idx
+                
+        if last_punc_idx != -1:
+            sanitized = text[:last_punc_idx + 1].strip()
+            if sanitized:
+                return sanitized
+                
+        return text + "."
+
+    def _fallback_parse_script(self, text: str, topic: str, num_scenes: int = 4, per_scene: int = 6, style: str = "", is_vlog: bool = False) -> Dict:
         """Fallback if JSON parsing fails."""
         lines = text.strip().split('\n')
         scenes = []
         for i in range(num_scenes):
-            narration = lines[i] if i < len(lines) else f"Continuing the story of {topic}."
+            raw_line = lines[i] if i < len(lines) else f"Continuing the story of {topic}."
+            narration = self._sanitize_text(raw_line)
+            scene_type = "host_talking" if is_vlog and i % 2 == 0 else "b_roll"
+            
             scenes.append({
                 "scene_number": i + 1,
-                "visual_description": f"Scene {i+1} about {topic}",
+                "scene_type": scene_type,
+                "visual_description": f"A vlog-style shot of a host speaking to the camera about {topic}" if scene_type == "host_talking" else f"Scene {i+1} about {topic}",
+                "i2i_prompt": "A clean, well-lit vlog studio background" if scene_type == "host_talking" else "",
                 "narration_text": narration,
                 "duration_seconds": per_scene,
             })
+        hook_val = self._sanitize_text(lines[0] if lines else topic)
         return {
             "title": topic,
             "description": f"Learn about {topic} in this amazing short video!",
             "hashtags": ["#shorts", f"#{topic.replace(' ', '')}", "#facts"],
-            "hook": lines[0] if lines else topic,
+            "hook": hook_val,
             "scenes": scenes,
             "call_to_action": "Like and subscribe for more!"
         }

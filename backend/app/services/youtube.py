@@ -287,6 +287,15 @@ class YouTubeService:
         youtube = self.get_authenticated_service(credentials_file)
         if not youtube:
             return {"status": "error", "message": "Not authenticated for this channel"}
+        
+        # Sanitize title to ensure it's not empty/None, and is within YouTube's 100-character limit
+        if not title or not str(title).strip():
+            title = "Untitled Short"
+        else:
+            title = str(title).strip()
+            if len(title) > 100:
+                title = title[:97] + "..."
+
         try:
             body = {
                 "snippet": {

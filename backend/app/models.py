@@ -28,6 +28,7 @@ class Project(Base):
     # Source
     source_type = Column(String, default="auto_research")  # auto_research, youtube_url, web_url, topic
     source_value = Column(String, nullable=True)
+    host_image = Column(String, nullable=True)
 
     # Category
     category = Column(String, nullable=False)
@@ -92,6 +93,10 @@ class Project(Base):
     # YouTube channel assignment
     youtube_channel_id = Column(Integer, ForeignKey("youtube_channels.id"), nullable=True)
 
+    # Vlog Host
+    host_image = Column(String, nullable=True)
+    is_vlog = Column(Boolean, default=True)
+
     # Archive
     archive_path = Column(StoragePathType, nullable=True)
     archived_at = Column(DateTime, nullable=True)
@@ -105,6 +110,7 @@ class Project(Base):
     uploads = relationship("Upload", back_populates="project", cascade="all, delete-orphan")
     prompt_logs = relationship("PromptLog", back_populates="project", cascade="all, delete-orphan")
     research_logs = relationship("ResearchLog", back_populates="project", cascade="all, delete-orphan")
+    sources = relationship("ProjectSource", back_populates="project", cascade="all, delete-orphan")
     youtube_channel = relationship("YouTubeChannel", back_populates="projects")
 
 class Script(Base):
@@ -216,6 +222,9 @@ class PromptLog(Base):
     trigger_words = Column(String, nullable=True)              # e.g. "claymation, stop motion, clay, ..."
     suffix = Column(String, nullable=True)                      # e.g. "25fps, high quality, vertical 9:16, ..."
     final_prompt = Column(Text, nullable=True)                  # exact string sent to ComfyUI node 6
+    workflow_type = Column(String, default="t2v")
+    image_prompt = Column(Text, nullable=True)
+    host_image_path = Column(String, nullable=True)
 
     # LoRA / style / seed / dims
     lora_name = Column(String, nullable=True)
@@ -279,3 +288,18 @@ class ResearchLog(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     project = relationship("Project", back_populates="research_logs")
+
+
+class ProjectSource(Base):
+    __tablename__ = "project_sources"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), index=True)
+    source_type = Column(String, nullable=False)  # webpage | youtube_url | pdf | text
+    source_name = Column(String, nullable=False)  # title or file name
+    source_value = Column(String, nullable=False)  # URL or local file path
+    content = Column(Text, nullable=True)  # scraped text or parsed transcript
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("Project", back_populates="sources")
+

@@ -1,5 +1,8 @@
 export const AI_STYLES = [
-  { id: 'none', name: 'Default', icon: '🎨', desc: 'Base model only' },
+  { id: 'none', name: 'Cinematic', icon: '🎥', desc: 'Base cinematic model (No LoRA)' },
+  { id: 'vlog_casual', name: 'Casual Smartphone', icon: '📱', desc: 'Shot on smartphone, natural handheld look' },
+  { id: 'vlog_documentary', name: 'Documentary', icon: '📽️', desc: 'Professional documentary cinematography' },
+  { id: 'vlog_studio', name: 'Studio Vlog', icon: '🎙️', desc: 'Professional studio lighting setup' },
   { id: 'cozyfelt', name: 'CozyFelt', icon: '🧶', desc: 'Soft felt-textured cozy aesthetic' },
   { id: 'fantasy_painterly', name: 'Fantasy Painterly', icon: '🖌️', desc: 'Rich oil-paint fantasy scenes' },
   { id: 'paper_cut_out_style', name: 'Paper Cut Out', icon: '✂️', desc: 'Layered paper cutout art' },
@@ -40,15 +43,16 @@ export const STYLE_LORA_PATHS = {
 };
 
 export const VOICES = [
-  { id: 'aiden', name: 'Aiden', gender: 'Male', locale: 'English' },
-  { id: 'dylan', name: 'Dylan', gender: 'Male', locale: 'English' },
-  { id: 'eric', name: 'Eric', gender: 'Male', locale: 'English' },
-  { id: 'ono_anna', name: 'Ono Anna', gender: 'Female', locale: 'English' },
-  { id: 'ryan', name: 'Ryan', gender: 'Male', locale: 'English' },
-  { id: 'serena', name: 'Serena', gender: 'Female', locale: 'English' },
-  { id: 'sohee', name: 'Sohee', gender: 'Female', locale: 'English' },
-  { id: 'uncle_fu', name: 'Uncle Fu', gender: 'Male', locale: 'English' },
-  { id: 'vivian', name: 'Vivian', gender: 'Female', locale: 'English' },
+  { id: 'kokoro-af_heart', name: 'Kokoro Heart', gender: 'Female', locale: 'English (US)' },
+  { id: 'kokoro-af_bella', name: 'Kokoro Bella', gender: 'Female', locale: 'English (US)' },
+  { id: 'kokoro-af_nicole', name: 'Kokoro Nicole', gender: 'Female', locale: 'English (US)' },
+  { id: 'kokoro-af_sarah', name: 'Kokoro Sarah', gender: 'Female', locale: 'English (US)' },
+  { id: 'kokoro-af_sky', name: 'Kokoro Sky', gender: 'Female', locale: 'English (US)' },
+  { id: 'kokoro-am_adam', name: 'Kokoro Adam', gender: 'Male', locale: 'English (US)' },
+  { id: 'kokoro-am_fenrir', name: 'Kokoro Fenrir', gender: 'Male', locale: 'English (US)' },
+  { id: 'kokoro-am_puck', name: 'Kokoro Puck', gender: 'Male', locale: 'English (US)' },
+  { id: 'kokoro-bf_emma', name: 'Kokoro Emma', gender: 'Female', locale: 'English (UK)' },
+  { id: 'kokoro-bm_george', name: 'Kokoro George', gender: 'Male', locale: 'English (UK)' },
 ];
 
 export const MUSIC_GENRES = [

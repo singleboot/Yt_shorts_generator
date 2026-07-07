@@ -112,7 +112,7 @@ class SchedulerService:
     
     # Maximum time (minutes) a job may stay in "running" state without a
     # DB commit before the watchdog declares it stuck and fails it.
-    STUCK_JOB_TIMEOUT_MINUTES = 45
+    STUCK_JOB_TIMEOUT_MINUTES = 1440
 
     def _watchdog_stuck_jobs(self):
         """Detect and recover jobs that have been stuck in 'running' for too long.
@@ -120,7 +120,7 @@ class SchedulerService:
         A job is considered stuck when its started_at (or updated_at) is older
         than STUCK_JOB_TIMEOUT_MINUTES without transitioning out of 'running'.
         This handles:
-        - ComfyUI hanging in wait_for_completion (timeout=3600 s by default)
+        - ComfyUI hanging in wait_for_completion (timeout=7200 s by default)
         - Deadlocked asyncio.run / ThreadPoolExecutor calls
         - Network errors that silently block
         """
@@ -250,9 +250,12 @@ class SchedulerService:
                         self._run_single_video_job(db, job)
                     else:
                         self._run_generation_job(db, job)
-                    job.status = "completed"
-                    job.progress = 100
-                    db.commit()
+                    
+                    db.refresh(job)
+                    if job.status not in ["failed", "cancelled"]:
+                        job.status = "completed"
+                        job.progress = 100
+                        db.commit()
                     telegram_bot.notify_job_status(job.id, job.logs, job.progress, job.status, result=getattr(job, "result", None))
                 except Exception as e:
                     job.status = "failed"
@@ -412,8 +415,15 @@ class SchedulerService:
         db.commit()
         telegram_bot.notify_job_status(job.id, job.logs, job.progress, job.status)
         
-        # 1. Research topic (URL mode, Reddit mode, or auto_research mode)
-        if project.source_type == "url" and project.source_value:
+        # 1. Research topic (NotebookLM sources, URL mode, Reddit mode, or auto_research mode)
+        if project.sources:
+            compiled_parts = []
+            for src in project.sources:
+                compiled_parts.append(f"=== SOURCE: {src.source_name} ({src.source_type}) ===\n{src.content or ''}")
+            web_content = "\n\n".join(compiled_parts)
+            topic = f"{project.name} part {video_num}"
+            research = {"topic": topic, "context": web_content}
+        elif project.source_type == "url" and project.source_value:
             web_content = run_async(research_service.summarize_webpage(
                 project.source_value,
                 db=db,
@@ -421,7 +431,7 @@ class SchedulerService:
                 job_id=job.id,
                 video_index=video_num - 1,
             ))
-            topic = f"{project.source_value} part {video_num}"
+            topic = f"{project.name} part {video_num}"
             research = {"topic": topic, "context": web_content}
         elif project.source_type == "reddit" and project.source_value:
             reddit_data = run_async(research_service.get_reddit_story(project.source_value))
@@ -490,7 +500,8 @@ class SchedulerService:
                 category=project.category,
                 context=research["context"],
                 duration=duration,
-                prev_scripts_context=prev_scripts_context
+                prev_scripts_context=prev_scripts_context,
+                is_vlog=project.is_vlog
             ))
 
         # 3. Save script (only if we generated a new one; otherwise the existing
@@ -530,8 +541,9 @@ class SchedulerService:
             partial = {}
             if not stage_str or stage_str == "completed":
                 return skipped, partial
-            # Linear pipeline: research < script < scenes_t2v < voiceover < music < assembly
-            order = ["research", "script", "scenes_t2v", "voiceover", "music", "assembly"]
+            # Linear pipeline: research < script < voiceover < scenes_t2v < music < assembly
+            # voiceover is now BEFORE scenes_t2v so LTX renders exactly the right frame count
+            order = ["research", "script", "voiceover", "scenes_t2v", "music", "assembly"]
             if ":" in stage_str:
                 name, n = stage_str.split(":", 1)
                 try:
@@ -585,11 +597,10 @@ class SchedulerService:
         else:
             t2v_log = f"Video {video_num}/{video_count} - Style '{style_key}' LoRA not found in models/loras, falling back to base model"
 
-        job.progress = 30
-        job.logs = t2v_log
+        job.progress = 25
         db.commit()
 
-        # 4. Generate t2v scene videos
+        # Set up directories
         video_idx = video_num - 1
         base_dir = settings.PROJECTS_DIR / str(project.id)
         videos_dir = base_dir / "videos" / str(video_idx)
@@ -599,17 +610,7 @@ class SchedulerService:
         audio_dir.mkdir(parents=True, exist_ok=True)
         final_dir.mkdir(parents=True, exist_ok=True)
 
-        # Cancellation check right before the long ComfyUI run
-        if check_cancel():
-            job.logs = f"Video {video_num}/{video_count} - Cancelled by user"
-            job.status = "cancelled"
-            db.commit()
-            return
-
-        # Resolve aspect ratio from project visual_settings. Width/height and
-        # aspect_str get stashed on the _active_visual_settings module hook
-        # so visuals_service._resolve_scene_dims reads them for every scene
-        # (including per-scene regen via the same hook).
+        # Resolve aspect ratio from project visual_settings.
         aspect_str = visual_settings.get("aspect_ratio", "vertical")
         aspect_cfg = settings.ASPECT_RATIOS.get(aspect_str, settings.ASPECT_RATIOS["vertical"])
         target_w = aspect_cfg["width"]
@@ -617,8 +618,6 @@ class SchedulerService:
         aspect_per_scene = aspect_cfg["per_scene"]
 
         # Re-clamp each scene's duration to the aspect's per-scene cap.
-        # When a project is switched from vertical to HD horizontal (5s cap)
-        # the existing script's duration_seconds=8 would OOM at 1920x1080.
         scenes = script_data.get("scenes", [])
         clamped = 0
         for sc in scenes:
@@ -627,8 +626,6 @@ class SchedulerService:
                 clamped += 1
         if clamped:
             script_data["scenes"] = scenes
-            # Persist the clamped script so subsequent reassembles don't
-            # re-trigger the clamp.
             try:
                 from app.services.scheduler import _clamp_script_durations
             except ImportError:
@@ -642,21 +639,159 @@ class SchedulerService:
             )
             db.commit()
 
+        # ── AUDIO-FIRST: Generate TTS voiceover BEFORE T2V ─────────────────────
+        # This lets us measure each clip's actual spoken duration and tell LTX
+        # exactly how many frames to render, eliminating freeze-padded clips.
+
+        # Look up the actual saved script for per-video overrides (voice, music)
+        existing_script = db.query(models.Script).filter(
+            models.Script.project_id == project.id,
+            models.Script.video_index == video_num - 1
+        ).first()
+        script_vo = {}
+        if existing_script and existing_script.video_overrides:
+            script_vo = existing_script.video_overrides
+            if isinstance(script_vo, str):
+                script_vo = json.loads(script_vo)
+
+        # Resolve voice settings
+        effective_voice = audio_settings.get("voice_id", "en-US-AriaNeural")
+        voice_custom = audio_settings.get("voice_custom", "")
+        if script_vo.get("voice_id"):
+            effective_voice = script_vo["voice_id"]
+            voice_custom = script_vo.get("voice_custom", "")
+        speaker_for_tts = voice_custom if effective_voice == "__custom__" else effective_voice
+
+        # Determine if voice is Edge TTS
+        qwen_ids = ["aiden", "dylan", "eric", "ono_anna", "ryan", "serena", "sohee", "uncle_fu", "vivian"]
+        is_edge_tts = not (speaker_for_tts.lower() in qwen_ids or any(q in speaker_for_tts.lower() for q in qwen_ids))
+
+        # RESUME: skip voiceover if already on disk
+        skip_voiceover = "voiceover" in skipped_stages
+        audio_assets = []
+        if skip_voiceover:
+            for i, sc in enumerate(script_data.get("scenes", [])):
+                if not sc.get("narration_text"):
+                    continue
+                v_path = audio_dir / f"voice_{i+1:02d}.mp3"
+                if v_path.exists() and v_path.stat().st_size > 1024 and (
+                    not is_edge_tts or v_path.with_suffix(".json").exists()
+                ):
+                    audio_assets.append({
+                        "scene_index": i,
+                        "type": "audio",
+                        "source": "comfyui_qwen3_tts" if not is_edge_tts else "tts",
+                        "local_path": str(v_path),
+                        "text": sc["narration_text"],
+                        "voice_id": speaker_for_tts,
+                    })
+            if audio_assets:
+                job.logs = f"Video {video_num}/{video_count} - Voiceover already on disk ({len(audio_assets)} clips), skipping TTS"
+                db.commit()
+            else:
+                skip_voiceover = False  # files missing, regenerate
+
+        if not skip_voiceover:
+            job.progress = 30
+            job.logs = f"Video {video_num}/{video_count} - Generating voiceover (audio-first)..."
+            db.commit()
+            try:
+                audio_assets = run_async(audio_service.generate_scene_voiceovers(
+                    script_data.get("scenes", []),
+                    voice_id=speaker_for_tts,
+                    project_dir=audio_dir
+                ))
+            except Exception as e:
+                logging.warning("Video %s/%s - TTS voiceover failed (continuing without): %s",
+                    video_num, video_count, str(e)[:200])
+                job.logs = f"Video {video_num}/{video_count} - Voiceover failed, continuing without"
+                db.commit()
+                audio_assets = []
+
+        # Save audio assets to DB
+        for asset in audio_assets:
+            existing_asset = db.query(models.Asset).filter(
+                models.Asset.project_id == project.id,
+                models.Asset.script_id == script.id,
+                models.Asset.scene_index == asset["scene_index"],
+                models.Asset.asset_type == "audio"
+            ).first()
+            if not existing_asset:
+                db.add(models.Asset(
+                    project_id=project.id,
+                    script_id=script.id,
+                    scene_index=asset["scene_index"],
+                    asset_type="audio",
+                    source=asset.get("source", "tts"),
+                    local_path=asset["local_path"]
+                ))
+        db.commit()
+
+        # CHECKPOINT: voiceover complete (before T2V)
+        voice_count = len([s for s in script_data.get("scenes", []) if s.get("narration_text")])
+        job.current_stage = f"voiceover:{voice_count}/{voice_count}" if voice_count else "voiceover:0/0"
+        db.commit()
+
+        # ── Inject actual audio duration into each scene ────────────────────────
+        # Measure the actual duration of each rendered TTS clip and update the
+        # scene's duration_seconds. LTX will render (actual_audio + 1s handle)
+        # frames so the video is ALWAYS longer than the audio — no freeze pad needed.
+        audio_map_for_dur = {}
+        for asset in audio_assets:
+            idx = asset.get("scene_index")
+            p = asset.get("local_path")
+            if idx is not None and p and Path(p).exists():
+                audio_map_for_dur[idx] = p
+
+        for i, sc in enumerate(scenes):
+            if not isinstance(sc, dict):
+                continue
+            audio_path = audio_map_for_dur.get(i)
+            if audio_path:
+                try:
+                    import subprocess as _sp
+                    result = _sp.run(
+                        ["ffprobe", "-v", "error", "-show_entries",
+                         "format=duration", "-of", "default=noprint_wrappers=1:nokey=1",
+                         str(audio_path)],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    measured = float(result.stdout.strip())
+                    if measured > 0.5:
+                        # Cap to aspect's per-scene limit to avoid VRAM OOM
+                        capped = min(measured, aspect_per_scene)
+                        sc["duration_seconds"] = round(capped, 3)
+                        sc["_audio_duration"] = round(measured, 3)  # preserve real dur for assembly trim
+                        if abs(measured - sc.get("duration_seconds", 6)) > 0.3:
+                            print(
+                                f"[audio-first] Scene {i+1}: script={sc.get('duration_seconds',6):.1f}s, "
+                                f"actual TTS={measured:.2f}s → LTX target={capped:.2f}s",
+                                flush=True
+                            )
+                except Exception as e:
+                    print(f"[audio-first] Could not measure scene {i+1} audio duration: {e}", flush=True)
+
+        # ── 4. Generate T2V scene videos (with audio-correct frame count) ───────
+        if check_cancel():
+            job.logs = f"Video {video_num}/{video_count} - Cancelled by user"
+            job.status = "cancelled"
+            db.commit()
+            return
+            
+        job.logs = t2v_log
+        db.commit()
+
         def scene_progress(idx, total, msg):
             """Update job progress during scene generation."""
             try:
-                # Map scene gen to 30-55% of total job
-                pct = 30 + int((idx / max(total, 1)) * 25)
+                # Map scene gen to 40-70% of total job
+                pct = 40 + int((idx / max(total, 1)) * 30)
                 job.progress = pct
                 job.logs = f"Video {video_num}/{video_count} - Scene {idx+1}/{total}..."
                 db.commit()
             except:
                 pass
 
-        # Stash aspect/transition/dims on the module-level hook so
-        # visuals_service._resolve_scene_dims + per-scene regen see the
-        # project's current values without threading them through every
-        # function signature. Cleared in a finally block at the end of the job.
         import app.config as _settings_module
         _settings_module._active_visual_settings = {
             "_width": target_w,
@@ -664,12 +799,20 @@ class SchedulerService:
             "_aspect_str": aspect_str,
         }
         try:
+            if not run_async(visuals_service.comfyui.is_connected()):
+                job.status = "failed"
+                job.logs = f"Video {video_num}/{video_count} - Failed: ComfyUI is not running or not connected."
+                db.commit()
+                return
+
             scene_clip_paths = run_async(visuals_service.generate_scene_videos(
                 scenes=scenes,
                 project_dir=videos_dir,
                 lora_name=lora_name,
                 lora_strength=lora_strength,
                 style_key=style_key,
+                host_image=project.host_image,
+                audio_map=audio_map_for_dur,
                 project_id=project.id,
                 video_index=video_idx,
                 job_id=job.id,
@@ -681,7 +824,6 @@ class SchedulerService:
             if check_cancel():
                 return
 
-            # Abort if no scenes were generated (all failed/timed out)
             if not scene_clip_paths or len(scene_clip_paths) == 0:
                 job.status = "failed"
                 job.logs = f"Video {video_num}/{video_count} - Scene generation failed (0/{len(scenes)} clips)"
@@ -716,102 +858,17 @@ class SchedulerService:
         job.current_stage = f"scenes_t2v:{len(scene_clip_paths)}/{len(scenes)}"
         db.commit()
 
-        # Look up the actual saved script (created by generate-scripts endpoint) for this video_index
-        # to get any per-video overrides (voice, music, etc.)
-        existing_script = db.query(models.Script).filter(
-            models.Script.project_id == project.id,
-            models.Script.video_index == video_num - 1
-        ).first()
-        script_vo = {}
-        if existing_script and existing_script.video_overrides:
-            script_vo = existing_script.video_overrides
-            if isinstance(script_vo, str):
-                script_vo = json.loads(script_vo)
-
-        # Resolve voice settings
-        effective_voice = audio_settings.get("voice_id", "en-US-AriaNeural")
-        voice_custom = audio_settings.get("voice_custom", "")
-        if script_vo.get("voice_id"):
-            effective_voice = script_vo["voice_id"]
-            voice_custom = script_vo.get("voice_custom", "")
-        speaker_for_tts = voice_custom if effective_voice == "__custom__" else effective_voice
-
-        # Determine if voice is Edge TTS
-        qwen_ids = ["aiden", "dylan", "eric", "ono_anna", "ryan", "serena", "sohee", "uncle_fu", "vivian"]
-        is_edge_tts = not (speaker_for_tts.lower() in qwen_ids or any(q in speaker_for_tts.lower() for q in qwen_ids))
-
-        # If every scene is already on disk (full resume case), the t2v loop
-        # above did zero work. Skip voiceover too if it's already done.
-        if "voiceover" in skipped_stages and not check_cancel():
-            # Verify files exist before declaring voiceover done
-            voice_dir = audio_dir
-            all_voice_present = all(
-                (voice_dir / f"voice_{i+1:02d}.mp3").exists()
-                and (voice_dir / f"voice_{i+1:02d}.mp3").stat().st_size > 1024
-                and (not is_edge_tts or (voice_dir / f"voice_{i+1:02d}.json").exists())
-                for i in range(len(scenes))
-                if scenes[i].get("narration_text")
-            )
-            if all_voice_present:
-                job.logs = f"Video {video_num}/{video_count} - Voiceover already on disk, skipping"
-                db.commit()
-                # Skip the voiceover block below
-                job.current_stage = "voiceover:1/1"  # sentinel: all done
-                db.commit()
-
-        job.progress = 55
-        job.logs = f"Video {video_num}/{video_count} - Generating voiceover..."
-        db.commit()
-
-        # RESUME: if the previous run completed voiceover (current_stage passed
-        # it OR we set the sentinel above in the scenes_t2v check), reuse the
-        # mp3 files on disk rather than calling ComfyUI TTS again.
-        skip_voiceover = (
-            "voiceover" in skipped_stages
-            or job.current_stage == "voiceover:1/1"
-        )
-        if skip_voiceover:
-            audio_assets = []
-            for i, sc in enumerate(script_data.get("scenes", [])):
-                if not sc.get("narration_text"):
-                    continue
-                v_path = audio_dir / f"voice_{i+1:02d}.mp3"
-                if v_path.exists() and v_path.stat().st_size > 1024 and (not is_edge_tts or v_path.with_suffix(".json").exists()):
-                    audio_assets.append({
-                        "scene_index": i,
-                        "type": "audio",
-                        "source": "comfyui_qwen3_tts" if not is_edge_tts else "tts",
-                        "local_path": str(v_path),
-                        "text": sc["narration_text"],
-                        "voice_id": speaker_for_tts,
-                    })
-            if audio_assets:
-                job.logs = f"Video {video_num}/{video_count} - Voiceover already on disk ({len(audio_assets)} clips), skipping TTS"
-                db.commit()
-            else:
-                # Files missing - fall through to regeneration
-                skip_voiceover = False
-
-        if not skip_voiceover:
-            try:
-                audio_assets = run_async(audio_service.generate_scene_voiceovers(
-                    script_data.get("scenes", []),
-                    voice_id=speaker_for_tts,
-                    project_dir=audio_dir
-                ))
-            except Exception as e:
-                logging.warning("Video %s/%s - TTS voiceover failed (continuing without): %s",
-                    video_num, video_count, str(e)[:200])
-                job.logs = f"Video {video_num}/{video_count} - Voiceover failed, continuing without"
-                db.commit()
-                audio_assets = []
-
-        # Map each audio asset to its planned duration
+        # ── Map each audio asset to its measured/planned duration ──────────────
+        # audio_assets was built above (audio-first). Attach duration_seconds.
         scenes = script_data.get("scenes", [])
         for asset in audio_assets:
             idx = asset.get("scene_index")
             if idx is not None and idx < len(scenes):
-                asset["duration_seconds"] = scenes[idx].get("duration_seconds", 6)
+                # Prefer the _audio_duration we measured above; fall back to script value
+                asset["duration_seconds"] = scenes[idx].get(
+                    "_audio_duration",
+                    scenes[idx].get("duration_seconds", 6)
+                )
 
         # Generate and append outro voiceover if configured
         outro_seconds = getattr(settings, "OUTRO_DURATION_SECONDS", 0) or 0
@@ -819,7 +876,7 @@ class SchedulerService:
         if outro_seconds > 0 and outro_path_setting and Path(outro_path_setting).exists():
             outro_text = script_data.get("call_to_action", "Like, subscribe, and hit the bell for more!")
             outro_vo_path = audio_dir / "voice_outro.mp3"
-            
+
             outro_exists = outro_vo_path.exists() and outro_vo_path.stat().st_size > 1024
             success = True
             if not outro_exists:
@@ -832,7 +889,7 @@ class SchedulerService:
                 except Exception as e:
                     print(f"[Outro VO] generation failed: {e}")
                     success = False
-            
+
             if success and outro_vo_path.exists():
                 outro_asset = {
                     "scene_index": 999,
@@ -845,7 +902,6 @@ class SchedulerService:
                 }
                 if not any(a.get("scene_index") == 999 for a in audio_assets):
                     audio_assets.append(outro_asset)
-                    # Add to database assets if not already there
                     db_has_outro = db.query(models.Asset).filter(
                         models.Asset.project_id == project.id,
                         models.Asset.script_id == script.id,
@@ -862,31 +918,6 @@ class SchedulerService:
                             local_path=str(outro_vo_path)
                         ))
                         db.commit()
-
-        for asset in audio_assets:
-            # Check if asset is already in database to avoid duplicate DB insertions
-            existing_asset = db.query(models.Asset).filter(
-                models.Asset.project_id == project.id,
-                models.Asset.script_id == script.id,
-                models.Asset.scene_index == asset["scene_index"],
-                models.Asset.asset_type == "audio"
-            ).first()
-            if not existing_asset:
-                db.add(models.Asset(
-                    project_id=project.id,
-                    script_id=script.id,
-                    scene_index=asset["scene_index"],
-                    asset_type="audio",
-                    source=asset.get("source", "tts"),
-                    local_path=asset["local_path"]
-                ))
-
-        db.commit()
-
-        # CHECKPOINT: voiceover complete
-        voice_count = len([s for s in script_data.get("scenes", []) if s.get("narration_text")])
-        job.current_stage = f"voiceover:{voice_count}/{voice_count}" if voice_count else "voiceover:0/0"
-        db.commit()
 
         # RESUME: if music was already complete in a previous run, reuse the
         # mp3 on disk rather than hitting ComfyUI music gen again.
@@ -1044,6 +1075,7 @@ class SchedulerService:
             
             job.progress = 100
             job.logs = f"Video {video_num}/{video_count} - Complete!"
+            print(f"[PROGRESS] Generated video {video_num} of {video_count} for project '{project.name}'", flush=True)
             # CHECKPOINT: full pipeline complete
             job.current_stage = "completed"
             db.commit()
@@ -1059,8 +1091,7 @@ class SchedulerService:
         try:
             now = datetime.utcnow()
             uploads = db.query(models.Upload).filter(
-                models.Upload.status == "queued",
-                models.Upload.scheduled_for <= now
+                models.Upload.status == "queued"
             ).limit(5).all()
 
             for upload in uploads:
@@ -1078,14 +1109,20 @@ class SchedulerService:
                 db.commit()
 
                 try:
+                    if upload.scheduled_for and upload.scheduled_for > now:
+                        privacy = "private"
+                        publish_time = upload.scheduled_for.replace(tzinfo=None).isoformat() + "Z"
+                    else:
+                        privacy = "public"
+                        publish_time = None
                     result = youtube_service.upload_video(
                         credentials_file=channel.credentials_file,
                         video_path=upload.video_path,
                         title=upload.title,
                         description=upload.description,
                         tags=upload.tags.split(",") if upload.tags else [],
-                        privacy_status="private",
-                        publish_at=upload.scheduled_for.isoformat() + "Z" if upload.scheduled_for else None,
+                        privacy_status=privacy,
+                        publish_at=publish_time,
                         thumbnail_path=upload.thumbnail_path
                     )
 
@@ -1327,6 +1364,88 @@ class SchedulerService:
                 for u in old_uploads:
                     db.delete(u)
                 db.commit()
+                
+                # Determine what changed to smartly delete only necessary assets
+                style_changed = False
+                audio_changed = False
+                music_changed = False
+                
+                if overrides and existing_vo is not None:
+                    if overrides.get("ai_style") != existing_vo.get("ai_style") or \
+                       overrides.get("lora_strength") != existing_vo.get("lora_strength"):
+                        style_changed = True
+                    if overrides.get("voice_id") != existing_vo.get("voice_id") or \
+                       overrides.get("voice_custom") != existing_vo.get("voice_custom"):
+                        audio_changed = True
+                    if overrides.get("music_genre") != existing_vo.get("music_genre") or \
+                       overrides.get("music_prompt") != existing_vo.get("music_prompt"):
+                        music_changed = True
+                else:
+                    # If no overrides provided or no previous state, assume everything needs regeneration just in case,
+                    # or at least standard visual regeneration (old behavior).
+                    style_changed = True
+
+                # Determine the stage to resume at.
+                # Pipeline order: research -> script -> voiceover -> scenes_t2v -> music -> assembly
+                # Because LTX scenes are tightly coupled to audio duration, changing the voice MUST trigger scene regeneration.
+                if audio_changed:
+                    style_changed = True
+                    initial_stage = "voiceover:0"
+                elif style_changed:
+                    initial_stage = "scenes_t2v:0"
+                elif music_changed:
+                    initial_stage = "music"
+                else:
+                    initial_stage = "script" # fallback
+
+                base_dir = settings.PROJECTS_DIR / str(project_id)
+                videos_dir = base_dir / "videos" / str(video_index)
+                audio_dir = base_dir / "audio" / str(video_index)
+
+                if style_changed:
+                    if videos_dir.exists():
+                        for p in videos_dir.glob("scene_*.mp4"):
+                            try: p.unlink()
+                            except Exception: pass
+                    try:
+                        db.query(models.Asset).filter(
+                            models.Asset.project_id == project_id,
+                            models.Asset.script_id == script.id,
+                            models.Asset.asset_type == "video"
+                        ).delete()
+                        db.commit()
+                    except Exception:
+                        pass
+                
+                if audio_changed:
+                    if audio_dir.exists():
+                        for p in audio_dir.glob("voice_*.mp3"):
+                            try: p.unlink()
+                            except Exception: pass
+                    try:
+                        db.query(models.Asset).filter(
+                            models.Asset.project_id == project_id,
+                            models.Asset.script_id == script.id,
+                            models.Asset.asset_type == "audio"
+                        ).delete()
+                        db.commit()
+                    except Exception:
+                        pass
+                        
+                if music_changed:
+                    if audio_dir.exists():
+                        for p in audio_dir.glob("bgm.mp3"):
+                            try: p.unlink()
+                            except Exception: pass
+                    try:
+                        db.query(models.Asset).filter(
+                            models.Asset.project_id == project_id,
+                            models.Asset.script_id == script.id,
+                            models.Asset.asset_type == "music"
+                        ).delete()
+                        db.commit()
+                    except Exception:
+                        pass
             
             # Get project for video count
             project = db.query(models.Project).get(project_id)
@@ -1339,7 +1458,8 @@ class SchedulerService:
                 job_type="video",
                 status="queued",
                 logs=f"Video {video_index + 1}/{video_count}",
-                progress=0
+                progress=0,
+                current_stage=initial_stage
             )
             db.add(job)
             db.commit()
@@ -1472,11 +1592,22 @@ class SchedulerService:
             visual_settings = json.loads(project.visual_settings) if isinstance(project.visual_settings, str) else (project.visual_settings or {})
             caption_settings = json.loads(project.caption_settings) if isinstance(project.caption_settings, str) else (project.caption_settings or {})
 
-            # Style LoRA + strength from project
-            style_key = visual_settings.get("style", "none")
+            # Apply per-video overrides if they exist
+            override = script.video_overrides
+            if override:
+                if isinstance(override, str):
+                    import json
+                    override = json.loads(override)
+            if override:
+                if override.get("ai_style"):
+                    visual_settings["ai_style"] = override["ai_style"]
+                if override.get("lora_strength") is not None:
+                    visual_settings["lora_strength"] = override["lora_strength"]
+
+            # Style LoRA + strength from project or overrides
+            style_key = visual_settings.get("ai_style", "none")
             if style_key in ("none", "", None):
-                # Try ai_style as fallback (ProjectDetail uses ai_style)
-                style_key = visual_settings.get("ai_style", "none")
+                style_key = visual_settings.get("style", "none")
             if style_key in ("none", "", None):
                 style_key = None
             lora_name = visual_settings.get("lora_name") or None
@@ -1513,13 +1644,32 @@ class SchedulerService:
             # deterministic but distinct from the original.
             from app.config import settings as _settings_module
             visual_settings_for_seed = dict(visual_settings)
+            
+            # Extract aspect settings from project config so the regenerated scene gets the correct aspect ratio/resolution
+            aspect_str = visual_settings.get("aspect") or visual_settings.get("aspect_ratio") or "vertical"
+            aspect_config = settings.ASPECT_RATIOS.get(aspect_str, settings.ASPECT_RATIOS["vertical"])
+            visual_settings_for_seed["_width"] = aspect_config["width"]
+            visual_settings_for_seed["_height"] = aspect_config["height"]
+            visual_settings_for_seed["_aspect_str"] = aspect_str
+            
             visual_settings_for_seed["_regen_offset"] = seed_offset
             visual_settings_for_seed["_trigger_words"] = trigger_words_str
             # CUSTOM PROMPT: user-tweaked visual description. Map keyed by
             # scene index (0-based) so visuals_service can pick the right
             # override per scene.
+            # Delete target file if it already exists to prevent visuals_service from skipping it (due to resume/cache logic)
+            temp_path = videos_dir / "scene_01.mp4"
+            if temp_path.exists():
+                temp_path.unlink()
+            desired_path = videos_dir / f"scene_{scene_index+1:02d}.mp4"
+            if desired_path.exists():
+                desired_path.unlink()
+
             if custom_prompt and custom_prompt.strip():
+                # visuals_service iterates through single_scene_list with enumerate, so the index i will be 0.
+                # But it could also check str(scene_index). We map both to ensure it matches.
                 visual_settings_for_seed["_custom_prompt_for"] = {
+                    "0": custom_prompt.strip(),
                     str(scene_index): custom_prompt.strip()
                 }
             _settings_module._active_visual_settings = visual_settings_for_seed
@@ -1530,6 +1680,7 @@ class SchedulerService:
                     lora_name=lora_name,
                     lora_strength=lora_strength,
                     style_key=style_key,
+                    host_image=project.host_image,
                     project_id=project_id,
                     video_index=video_index,
                     job_id=None,

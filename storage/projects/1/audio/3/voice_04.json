@@ -1,82 +1,97 @@
 [
   {
-    "word": "The",
+    "word": "As",
     "start": 0.102625,
-    "end": 0.27366599999999996
-  },
-  {
-    "word": "shift",
-    "start": 0.286833,
-    "end": 0.642083
-  },
-  {
-    "word": "to",
-    "start": 0.65525,
-    "end": 0.747375
-  },
-  {
-    "word": "professional",
-    "start": 0.760541,
-    "end": 1.405291
-  },
-  {
-    "word": "play",
-    "start": 1.418416,
-    "end": 1.707874
-  },
-  {
-    "word": "dramatically",
-    "start": 1.721041,
-    "end": 2.3789160000000003
-  },
-  {
-    "word": "changed",
-    "start": 2.392125,
-    "end": 2.852666
+    "end": 0.326291
   },
   {
     "word": "the",
-    "start": 2.865791,
-    "end": 2.957916
+    "start": 0.339458,
+    "end": 0.40524899999999997
   },
   {
-    "word": "sport",
-    "start": 2.971041,
-    "end": 3.523666
+    "word": "years",
+    "start": 0.418416,
+    "end": 0.786832
   },
   {
-    "word": "Players",
-    "start": 4.434208,
-    "end": 4.907874
+    "word": "passed",
+    "start": 0.8,
+    "end": 1.2868330000000001
   },
   {
-    "word": "went",
-    "start": 4.921041,
-    "end": 5.171041
+    "word": "the",
+    "start": 1.484208,
+    "end": 1.589458
+  },
+  {
+    "word": "stature",
+    "start": 1.602625,
+    "end": 2.063166
+  },
+  {
+    "word": "grew",
+    "start": 2.076333,
+    "end": 2.510541
+  },
+  {
+    "word": "The",
+    "start": 3.421041,
+    "end": 3.605249
+  },
+  {
+    "word": "tournament",
+    "start": 3.618416,
+    "end": 4.118416
+  },
+  {
+    "word": "evolved",
+    "start": 4.131583,
+    "end": 4.565791
   },
   {
     "word": "from",
-    "start": 5.184208,
-    "end": 5.328958
+    "start": 4.578958,
+    "end": 4.763166
   },
   {
-    "word": "amateurs",
-    "start": 5.342125,
-    "end": 5.960541
+    "word": "mere",
+    "start": 4.776333,
+    "end": 5.065791
+  },
+  {
+    "word": "exhibition",
+    "start": 5.078958,
+    "end": 5.776333
   },
   {
     "word": "to",
-    "start": 5.973666,
-    "end": 6.0789159999999995
+    "start": 5.789458,
+    "end": 5.934208
+  },
+  {
+    "word": "a",
+    "start": 5.947375,
+    "end": 6.026333
+  },
+  {
+    "word": "defining",
+    "start": 6.039458,
+    "end": 6.5789159999999995
   },
   {
     "word": "global",
-    "start": 6.092125,
-    "end": 6.473708
+    "start": 6.592125,
+    "end": 6.986875
   },
   {
-    "word": "stars",
-    "start": 6.486833,
-    "end": 7.118416
+    "word": "sporting",
+    "start": 7.0,
+    "end": 7.434208
+  },
+  {
+    "word": "pinnacle",
+    "start": 7.447375,
+    "end": 8.013166
   }
 ]

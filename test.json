@@ -1,0 +1,50 @@
+{
+  "inputs": {
+    "PowerLoraLoaderHeaderWidget": {
+      "type": "PowerLoraLoaderHeaderWidget"
+    },
+    "lora_1": {
+      "on": true,
+      "lora": "ltx2\\ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+      "strength": 0.6
+    },
+    "lora_2": {
+      "on": true,
+      "lora": "ltx2\\Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+      "strength": 0.7
+    },
+    "lora_3": {
+      "on": true,
+      "lora": "ltx2\\LTX-2.3-OmniNFT-RL-Lora_bf16.safetensors",
+      "strength": 0.9
+    },
+    "lora_4": {
+      "on": true,
+      "lora": "ltx2\\LTX2.3_Crisp_Enhance.safetensors",
+      "strength": 0.8
+    },
+    "lora_5": {
+      "on": true,
+      "lora": "ltx2\\ltx2.3_upscale_ic-lora_06250.safetensors",
+      "strength": 0.85
+    },
+    "lora_6": {
+      "on": true,
+      "lora": "ltx2\\ltx-2.3-id-lora-celebvhq-3k.safetensors",
+      "strength": 0.88
+    },
+    "\u2795 Add Lora": "",
+    "model": [
+      "491",
+      0
+    ],
+    "clip": [
+      "514",
+      0
+    ]
+  },
+  "class_type": "Power Lora Loader (rgthree)",
+  "_meta": {
+    "title": "Power Lora Loader (rgthree)"
+  }
+}

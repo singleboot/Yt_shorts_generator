@@ -25,6 +25,8 @@ function SettingsPage() {
   const [serviceLog, setServiceLog] = useState('');
   const pollRef = useRef(null);
   const fileInputRef = useRef(null);
+  const hostFileInputRef = useRef(null);
+  const [hosts, setHosts] = useState([]);
 
   useEffect(() => {
     loadSettings();
@@ -33,6 +35,7 @@ function SettingsPage() {
     loadModelInfo();
     loadVoices();
     loadSetupInfo();
+    loadHosts();
     checkSystemStatus();
     const statusPoll = setInterval(checkSystemStatus, 5000);
     return () => clearInterval(statusPoll);
@@ -189,6 +192,40 @@ function SettingsPage() {
     } finally {
       setSaving(false);
       setTimeout(() => setMessage(''), 4000);
+    }
+  };
+
+  const loadHosts = async () => {
+    try {
+      const res = await api.get('/settings/hosts');
+      setHosts(res.data || []);
+    } catch (e) {
+      console.error('Failed to load hosts:', e);
+    }
+  };
+
+  const handleHostUpload = async (file) => {
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const res = await api.post('/settings/hosts', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setMessage('Host image uploaded successfully.');
+      setTimeout(() => setMessage(''), 3000);
+      loadHosts();
+    } catch (e) {
+      alert('Upload failed: ' + (e.response?.data?.message || e.message));
+    }
+  };
+
+  const handleUpdateHost = async (filename, field, value) => {
+    try {
+      const res = await api.put(`/settings/hosts/${filename}`, { [field]: value });
+      setHosts(prev => prev.map(h => h.filename === filename ? res.data : h));
+    } catch (e) {
+      console.error('Failed to update host', e);
     }
   };
 
@@ -1071,6 +1108,72 @@ function SettingsPage() {
                 </p>
               )}
             </div>
+            
+            {/* Vlog Hosts Section */}
+            <div className="pt-4 border-t border-[#252A33]">
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-xs font-semibold text-[#9AA0A6] uppercase tracking-wider">Vlog Hosts</label>
+                <input 
+                  type="file" 
+                  ref={hostFileInputRef} 
+                  className="hidden" 
+                  accept="image/png, image/jpeg, image/jpg, image/webp" 
+                  onChange={(e) => {
+                    handleHostUpload(e.target.files[0]);
+                    e.target.value = null;
+                  }}
+                />
+                <button 
+                  onClick={() => hostFileInputRef.current?.click()}
+                  className="neo-btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-[10px]"
+                >
+                  <Upload className="h-3 w-3" />
+                  Upload Host
+                </button>
+              </div>
+              
+              {hosts.length === 0 ? (
+                <p className="text-[11px] text-[#5F6772]">No host images uploaded yet. Upload images here to use the Vlog Host style.</p>
+              ) : (
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-2">
+                  {hosts.map(host => (
+                    <div key={host.filename} className="bg-[#151921] rounded-lg border border-[#252A33] overflow-hidden flex flex-col">
+                      <div className="relative aspect-[9/16] bg-[#0E1116]">
+                        <img src={`http://localhost:8002${host.url}`} alt={host.filename} className="w-full h-full object-cover" />
+                      </div>
+                      <div className="p-3 space-y-3 flex-1 flex flex-col">
+                        <div>
+                          <label className="block text-[10px] font-semibold text-[#9AA0A6] uppercase tracking-wider mb-1">Name</label>
+                          <input
+                            type="text"
+                            value={host.name || ''}
+                            onChange={(e) => handleUpdateHost(host.filename, 'name', e.target.value)}
+                            placeholder="Host Name"
+                            className="w-full px-2 py-1.5 text-xs rounded bg-[#0E1116] border border-[#252A33] text-[#F5F5F5] outline-none focus:border-[#C6F11D]/50"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-semibold text-[#9AA0A6] uppercase tracking-wider mb-1">Default Voice</label>
+                          <select
+                            value={host.voice_id || ''}
+                            onChange={(e) => handleUpdateHost(host.filename, 'voice_id', e.target.value)}
+                            className="w-full px-2 py-1.5 text-xs rounded bg-[#0E1116] border border-[#252A33] text-[#F5F5F5] outline-none focus:border-[#C6F11D]/50"
+                          >
+                            <option value="">No Default</option>
+                            {voices?.map((voice) => (
+                              <option key={voice.name} value={voice.name}>
+                                {voice.display_name || voice.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
           </div>
         ) : (
           <p className="text-sm text-[#5F6772]">Loading...</p>

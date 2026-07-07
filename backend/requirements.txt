@@ -22,3 +22,5 @@ google-auth-oauthlib>=1.2.0
 cycler>=0.12.1
 numpy>=1.26.4
 imageio[ffmpeg]>=2.34.1
+pypdf>=4.0.0
+

@@ -70,6 +70,7 @@ class VideoService:
         transition_style: str = "none",   # ffmpeg xfade transition (or "none")
         transition_duration: float = 0.0, # seconds trimmed from each cut
         audio_transition: str = "match_video",  # "match_video" | "none"
+        target_duration: float = None,
     ) -> bool:
         """Assemble final video: concat clips, mix audio, burn captions.
 
@@ -184,7 +185,7 @@ class VideoService:
             )
 
             # 5. Mux everything: video + audio + subtitles
-            success = self._mux_final(raw_video, mixed_audio_path, ass_path, output_path)
+            success = self._mux_final(raw_video, mixed_audio_path, ass_path, output_path, target_duration=target_duration)
 
             # Cleanup work dir
             try:
@@ -228,11 +229,12 @@ class VideoService:
                        target_w: int = 1080, target_h: int = 1920,
                        audio_assets: List[Dict] = None) -> List[Path]:
         """Upscale scene clips to (target_w x target_h) using ffmpeg lanczos.
-        If a scene has a corresponding audio clip that is longer than the video,
-        tpad will duplicate the last frame (clone mode) to extend video to match.
+
+        Audio-first pipeline: LTX renders duration+1s handle frames. We trim
+        each clip to exactly the audio duration — clean cut, no freeze-pad.
         """
         upscaled = []
-        
+
         # Map scene_index -> audio local path
         audio_map = {}
         if audio_assets:
@@ -245,19 +247,47 @@ class VideoService:
         for i, clip in enumerate(clips):
             out = work_dir / f"upscaled_{i:02d}.mp4"
             try:
-                # Check if we should pad this video clip to match its voiceover
                 audio_path = audio_map.get(i)
-                pad_filter = ""
+                vf_chain = f"scale={target_w}:{target_h}:flags=lanczos"
+
                 if audio_path:
                     v_dur = self._get_duration(clip)
                     a_dur = self._get_duration(audio_path)
-                    if v_dur > 0 and a_dur > v_dur:
-                        pad_dur = a_dur - v_dur
-                        # Add a tiny safety margin to prevent rounding cutoffs
-                        pad_filter = f",tpad=stop_mode=clone:stop_duration={pad_dur + 0.1}"
-                        print(f"[video pad] Scene {i} video={v_dur:.2f}s, audio={a_dur:.2f}s. Padding video by {pad_dur:.2f}s", flush=True)
 
-                vf_chain = f"scale={target_w}:{target_h}:flags=lanczos{pad_filter}"
+                    if v_dur > 0 and a_dur > 0:
+                        if v_dur > a_dur + 0.05:
+                            # Video is longer than audio (expected with +1s handle).
+                            # Trim to exact audio duration → clean hard cut, no freeze.
+                            trim_dur = round(a_dur, 3)
+                            vf_chain = (
+                                f"trim=duration={trim_dur},"
+                                f"scale={target_w}:{target_h}:flags=lanczos"
+                            )
+                            print(
+                                f"[trim] Scene {i}: video={v_dur:.2f}s, audio={a_dur:.2f}s "
+                                f"→ trimming handle to {trim_dur:.3f}s",
+                                flush=True,
+                            )
+                        elif v_dur < a_dur - 0.1:
+                            # Fallback: video still shorter than audio (edge case).
+                            # Use tpad clone as last resort — should rarely happen
+                            # now that audio-first adds handle frames.
+                            pad_dur = round(a_dur - v_dur + 0.1, 3)
+                            vf_chain = (
+                                f"scale={target_w}:{target_h}:flags=lanczos,"
+                                f"tpad=stop_mode=clone:stop_duration={pad_dur}"
+                            )
+                            print(
+                                f"[tpad-fallback] Scene {i}: video={v_dur:.2f}s < audio={a_dur:.2f}s "
+                                f"→ cloning last frame by {pad_dur:.3f}s",
+                                flush=True,
+                            )
+                        else:
+                            # Near-perfect match — just scale.
+                            print(
+                                f"[match] Scene {i}: video={v_dur:.2f}s ≈ audio={a_dur:.2f}s",
+                                flush=True,
+                            )
 
                 cmd = [
                     "ffmpeg", "-y", "-i", str(clip),
@@ -274,6 +304,7 @@ class VideoService:
                 print(f"Upscale failed for {clip}, using as-is: {e}")
                 upscaled.append(clip)
         return upscaled
+
 
     def _concat_videos(
         self,
@@ -486,7 +517,7 @@ class VideoService:
                 "-c:v", "libx264", "-preset", "fast", "-crf", "20",
                 "-c:a", "aac", "-b:a", "192k",
                 "-pix_fmt", "yuv420p",
-                "-r", "30",
+                "-r", "25",
                 "-movflags", "+faststart",
                 "-shortest",
                 str(output)
@@ -649,7 +680,7 @@ class VideoService:
         work_dir.mkdir(parents=True, exist_ok=True)
         out = work_dir / "outro_normalized.mp4"
         vf = (f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
-              f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:black,fps=30")
+              f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:black,fps=25")
         # Detect whether the source actually has an audio stream. ffmpeg
         # otherwise complains about `-b:a` being unused.
         has_audio = False
@@ -751,7 +782,7 @@ class VideoService:
             print(f"Outro append failed: {e}", file=sys.stderr, flush=True)
             return raw_video
 
-    def _mux_final(self, video: Path, audio: Path, ass_subs: Path, output: Path) -> bool:
+    def _mux_final(self, video: Path, audio: Path, ass_subs: Path, output: Path, target_duration: float = None) -> bool:
         """Final mux: combine video, audio, and (optional) .ass subtitles."""
         try:
             if ass_subs and ass_subs.exists():
@@ -773,9 +804,11 @@ class VideoService:
                     "-c:v", "libx264", "-preset", "fast", "-crf", "20",
                     "-c:a", "aac", "-b:a", "192k",
                     "-pix_fmt", "yuv420p",
-                    "-movflags", "+faststart",
-                    str(output)
+                    "-movflags", "+faststart"
                 ]
+                if target_duration:
+                    cmd.extend(["-t", f"{target_duration}"])
+                cmd.append(str(output))
             else:
                 cmd = [
                     "ffmpeg", "-y",
@@ -783,9 +816,11 @@ class VideoService:
                     "-i", str(audio),
                     "-c:v", "copy",
                     "-c:a", "aac", "-b:a", "192k",
-                    "-movflags", "+faststart",
-                    str(output)
+                    "-movflags", "+faststart"
                 ]
+                if target_duration:
+                    cmd.extend(["-t", f"{target_duration}"])
+                cmd.append(str(output))
             subprocess.run(cmd, check=True, capture_output=True)
             return True
         except subprocess.CalledProcessError as e:

@@ -35,7 +35,31 @@ function PromptConsole() {
         api.get('/prompts/stats/summary'),
         api.get('/projects/'),
       ]);
-      setPrompts(promptsRes.data || []);
+      
+      let allPrompts = promptsRes.data || [];
+      
+      // If a specific project is selected, fetch its preview prompts
+      if (filterProject && filterProject !== 'all') {
+        try {
+          const preRes = await api.get(`/projects/${filterProject}/prompts/preview`);
+          const previews = preRes.data || [];
+          
+          // Only add a preview if we don't already have a real prompt for that video/scene index in this project
+          const existingSet = new Set(allPrompts.map(p => `${p.project_id}-${p.video_index}-${p.scene_index}`));
+          for (const p of previews) {
+            if (!existingSet.has(`${p.project_id}-${p.video_index}-${p.scene_index}`)) {
+              allPrompts.push(p);
+            }
+          }
+        } catch (e) {
+          console.error("Failed to load previews", e);
+        }
+      }
+      
+      // Re-sort so newest (previews have newest time) is at top
+      allPrompts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      
+      setPrompts(allPrompts);
       setStats(statsRes.data || null);
       setProjects(projectsRes.data || []);
       setError(null);
@@ -46,7 +70,7 @@ function PromptConsole() {
 
   useEffect(() => {
     loadAll();
-  }, []);
+  }, [filterProject]);
 
   useEffect(() => {
     if (!autoRefresh) return;
@@ -130,6 +154,8 @@ function PromptConsole() {
         return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-[rgba(198,241,29,0.12)] text-[#C6F11D] border border-[rgba(198,241,29,0.3)]"><RotateCw className="h-2.5 w-2.5 animate-spin" />RUN</span>;
       case 'queued':
         return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-[rgba(255,200,69,0.12)] text-[#FFC845] border border-[rgba(255,200,69,0.3)]"><Clock className="h-2.5 w-2.5" />QUEUE</span>;
+      case 'preview':
+        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-[rgba(255,138,0,0.12)] text-[#FF8A00] border border-[rgba(255,138,0,0.3)]"><Sparkles className="h-2.5 w-2.5" />PREVIEW</span>;
       default:
         return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-[rgba(154,160,166,0.12)] text-[#9AA0A6] border border-[rgba(154,160,166,0.3)]">{status}</span>;
     }
@@ -349,6 +375,11 @@ function PromptConsole() {
                 <span className="text-[11px] font-bold text-[#C6F11D] w-36">
                   Video #{p.video_index !== undefined && p.video_index !== null ? p.video_index + 1 : '?'} • Scene {p.scene_number}
                 </span>
+                {p.workflow_type && (
+                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${p.workflow_type === 'i2v' ? 'bg-[rgba(255,200,69,0.15)] text-[#FFC845] border border-[rgba(255,200,69,0.3)]' : 'bg-[rgba(198,241,29,0.15)] text-[#C6F11D] border border-[rgba(198,241,29,0.3)]'}`}>
+                    {p.workflow_type}
+                  </span>
+                )}
                 {getStatusBadge(p.status)}
                 <span className="text-[11px] text-[#9AA0A6] flex-1 truncate">
                   {p.sanitized_visual_description || p.raw_visual_description || '(no description)'}
@@ -404,16 +435,49 @@ function PromptConsole() {
                     </div>
                   </div>
 
-                  {/* Final prompt (with trigger word highlight) */}
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="text-[10px] font-bold text-[#9AA0A6] uppercase tracking-wider">Final Prompt (sent to ComfyUI node 6)</div>
-                      <button onClick={() => copyText(p.final_prompt || '', 'Final')} className="text-[10px] text-[#5F6772] hover:text-[#C6F11D] flex items-center gap-1"><Copy className="h-2.5 w-2.5" />Copy</button>
-                    </div>
-                    <div className="text-[12px] font-mono break-words leading-relaxed bg-[#050608] border border-[#252A33] rounded-lg p-3 max-h-48 overflow-y-auto">
-                      {renderFinalPrompt(p)}
-                    </div>
-                  </div>
+                    {/* Nodes based on workflow_type */}
+                    {p.workflow_type === 'i2v' ? (
+                      <div className="space-y-3">
+                        {p.host_image_path && (
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="text-[10px] font-bold text-[#9AA0A6] uppercase tracking-wider">Host Image (Node 573)</div>
+                            </div>
+                            <div className="text-[12px] font-mono break-all leading-relaxed bg-[#050608] border border-[#252A33] rounded-lg p-2 max-h-16 overflow-hidden text-ellipsis whitespace-nowrap text-[#9AA0A6]">
+                              {p.host_image_path}
+                            </div>
+                          </div>
+                        )}
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="text-[10px] font-bold text-[#9AA0A6] uppercase tracking-wider">Image Prompt (Node 579)</div>
+                            <button onClick={() => copyText(p.image_prompt || '', 'Image Prompt')} className="text-[10px] text-[#5F6772] hover:text-[#C6F11D] flex items-center gap-1"><Copy className="h-2.5 w-2.5" />Copy</button>
+                          </div>
+                          <div className="text-[12px] font-mono break-words leading-relaxed bg-[#050608] border border-[#252A33] rounded-lg p-3 max-h-48 overflow-y-auto text-[#F5F5F5]">
+                            {p.image_prompt || '(None)'}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="text-[10px] font-bold text-[#9AA0A6] uppercase tracking-wider">Video Prompt (Node 507)</div>
+                            <button onClick={() => copyText(p.final_prompt || '', 'Video Prompt')} className="text-[10px] text-[#5F6772] hover:text-[#C6F11D] flex items-center gap-1"><Copy className="h-2.5 w-2.5" />Copy</button>
+                          </div>
+                          <div className="text-[12px] font-mono break-words leading-relaxed bg-[#050608] border border-[#252A33] rounded-lg p-3 max-h-48 overflow-y-auto">
+                            {renderFinalPrompt(p)}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="text-[10px] font-bold text-[#9AA0A6] uppercase tracking-wider">Final Prompt (sent to ComfyUI node 6)</div>
+                          <button onClick={() => copyText(p.final_prompt || '', 'Final')} className="text-[10px] text-[#5F6772] hover:text-[#C6F11D] flex items-center gap-1"><Copy className="h-2.5 w-2.5" />Copy</button>
+                        </div>
+                        <div className="text-[12px] font-mono break-words leading-relaxed bg-[#050608] border border-[#252A33] rounded-lg p-3 max-h-48 overflow-y-auto">
+                          {renderFinalPrompt(p)}
+                        </div>
+                      </div>
+                    )}
 
                   {/* Metadata grid */}
                   <div className="grid grid-cols-4 gap-3 text-[10px]">
@@ -470,6 +534,21 @@ function PromptConsole() {
                   {p.output_path && (
                     <div className="text-[10px] text-[#5F6772] font-mono break-all">
                       Output: {p.output_path}
+                    </div>
+                  )}
+
+                  {/* Generated Video Preview */}
+                  {p.status === 'completed' && p.project_id && p.video_index !== null && p.scene_number && (
+                    <div className="mt-4 border border-[#252A33] rounded-lg overflow-hidden bg-[#050608]">
+                      <div className="px-3 py-1.5 bg-[#131820] border-b border-[#252A33] text-[10px] font-bold text-[#9AA0A6] uppercase tracking-wider flex items-center justify-between">
+                        <span>Generated Video (Scene {p.scene_number})</span>
+                      </div>
+                      <video 
+                        controls 
+                        loop 
+                        className="w-full max-h-[400px] object-contain"
+                        src={`http://localhost:8002/storage/projects/${p.project_id}/video/${p.video_index}/scene_${p.scene_number.toString().padStart(2, '0')}.mp4`}
+                      />
                     </div>
                   )}
 

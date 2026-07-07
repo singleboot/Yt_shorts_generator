@@ -150,7 +150,7 @@ if frontend_build.exists():
     app.mount("/static", StaticFiles(directory=str(frontend_build)), name="frontend_static")
     
     # API route prefixes to exclude from SPA catch-all
-    API_PREFIXES = ("api/", "storage/", "assets/", "static/", "docs", "openapi.json")
+    API_PREFIXES = ("api/", "settings/", "storage/", "assets/", "static/", "docs", "openapi.json")
     
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):

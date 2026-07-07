@@ -1,0 +1,42 @@
+[
+  {
+    "word": "Like,",
+    "start": 0.0,
+    "end": 0.264
+  },
+  {
+    "word": "subscribe,",
+    "start": 0.264,
+    "end": 0.528
+  },
+  {
+    "word": "and",
+    "start": 0.528,
+    "end": 0.792
+  },
+  {
+    "word": "hit",
+    "start": 0.792,
+    "end": 1.056
+  },
+  {
+    "word": "the",
+    "start": 1.056,
+    "end": 1.32
+  },
+  {
+    "word": "bell",
+    "start": 1.32,
+    "end": 1.584
+  },
+  {
+    "word": "for",
+    "start": 1.584,
+    "end": 1.848
+  },
+  {
+    "word": "more!",
+    "start": 1.848,
+    "end": 2.112
+  }
+]

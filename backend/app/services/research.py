@@ -200,29 +200,49 @@ class ResearchService:
         results: List[Dict] = []
         err = ""
         
-        # 1. Fetch provider from project visual_settings
-        provider = "duckduckgo"
+        # 1. Fetch provider from project visual_settings or script overrides
+        provider = None
         if project_id:
             from app.database import SessionLocal
-            from app.models import Project
+            from app.models import Project, Script
             temp_db = db or SessionLocal()
             try:
-                proj = temp_db.query(Project).filter(Project.id == project_id).first()
-                if proj and proj.visual_settings:
-                    import json
-                    vs = proj.visual_settings
-                    if isinstance(vs, str):
+                # Check for card/script-specific override first
+                script = temp_db.query(Script).filter(
+                    Script.project_id == project_id,
+                    Script.video_index == video_index
+                ).first()
+                if script and script.video_overrides:
+                    vo = script.video_overrides
+                    if isinstance(vo, str):
                         try:
-                            vs = json.loads(vs)
+                            import json
+                            vo = json.loads(vo)
                         except:
-                            vs = {}
-                    if isinstance(vs, dict):
-                        provider = vs.get("research_provider", "duckduckgo")
+                            vo = {}
+                    if isinstance(vo, dict) and vo.get("research_provider"):
+                        provider = vo["research_provider"]
+                
+                if not provider:
+                    proj = temp_db.query(Project).filter(Project.id == project_id).first()
+                    if proj and proj.visual_settings:
+                        import json
+                        vs = proj.visual_settings
+                        if isinstance(vs, str):
+                            try:
+                                vs = json.loads(vs)
+                            except:
+                                vs = {}
+                        if isinstance(vs, dict):
+                            provider = vs.get("research_provider")
             except Exception as e:
                 print(f"Error fetching project research provider: {e}")
             finally:
                 if db is None:
                     temp_db.close()
+        
+        if not provider:
+            provider = "duckduckgo"
 
         # 2. Call the chosen provider
         try:
@@ -292,6 +312,21 @@ class ResearchService:
                 return f"{info.get('title', '')}\n\n{info.get('description', '')}"
         except Exception as e:
             print(f"YouTube transcript error: {e}")
+            return ""
+
+    def extract_pdf_text(self, file_path: str) -> str:
+        """Extract text content from a local PDF file using pypdf."""
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(file_path)
+            text_parts = []
+            for page in reader.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text_parts.append(page_text)
+            return "\n\n".join(text_parts)
+        except Exception as e:
+            print(f"PDF extraction error for {file_path}: {e}")
             return ""
     
     async def summarize_webpage(
@@ -375,9 +410,16 @@ Return ONLY a numbered list, one topic per line, no explanation."""
         db=None,
         project_id: int = 0,
         job_id: Optional[int] = None,
+        source: str = "web",
     ) -> List[str]:
         """Search web for trending topics in a category and return suggestions."""
-        search_query = f"trending {category} topics 2026 viral"
+        if source == "youtube":
+            search_query = f"site:youtube.com trending {category} topics viral 2026"
+            prompt_intro = f"Based on these YouTube search results about trending videos in {category}"
+        else:
+            search_query = f"trending {category} topics 2026 viral"
+            prompt_intro = f"Based on these search results about trending topics in {category}"
+
         search_results = await self.search_web(
             search_query,
             max_results=5,
@@ -396,7 +438,7 @@ Return ONLY a numbered list, one topic per line, no explanation."""
                 project_id=project_id,
                 job_id=job_id,
             )
-        prompt = f"""Based on these search results about trending topics in {category}, identify 5 specific, factual trending topics suitable for YouTube Shorts.
+        prompt = f"""{prompt_intro}, identify 5 specific, factual trending topics suitable for YouTube Shorts.
 
 Search results:
 {context}
@@ -534,13 +576,17 @@ Respond ONLY with the topic title, no explanation."""
     async def _ollama_generate(self, prompt: str, system: str = "") -> str:
         """Call Ollama API."""
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=600.0) as client:
                 payload = {
                     "model": self.model,
                     "prompt": prompt,
                     "system": system,
                     "stream": False,
-                    "options": {"temperature": 0.7}
+                    "options": {
+                        "temperature": 0.7,
+                        "num_predict": 4096,
+                        "num_ctx": 32768
+                    }
                 }
                 resp = await client.post(f"{self.ollama_host}/api/generate", json=payload)
                 data = resp.json()

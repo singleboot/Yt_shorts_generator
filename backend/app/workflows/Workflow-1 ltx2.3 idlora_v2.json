@@ -1,0 +1,1507 @@
+{
+  "276": {
+    "inputs": {
+      "audio": "ElevenLabs_2026-07-05T10_01_05_Cay - Captivating, Persuasive and Bright_pvc_sp100_s50_sb75_se0_b_m2.mp3",
+      "audioUI": "/api/view?filename=ElevenLabs_2026-07-05T10_01_05_Cay%20-%20Captivating%2C%20Persuasive%20and%20Bright_pvc_sp100_s50_sb75_se0_b_m2.mp3&type=input&subfolder=&rand=0.05465276205542957"
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "Load Audio"
+    }
+  },
+  "356": {
+    "inputs": {
+      "noise_seed": 43
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "357": {
+    "inputs": {
+      "noise_seed": 43
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "358": {
+    "inputs": {
+      "video_latent": [
+        "365",
+        0
+      ],
+      "audio_latent": [
+        "372",
+        1
+      ]
+    },
+    "class_type": "LTXVConcatAVLatent",
+    "_meta": {
+      "title": "LTXVConcatAVLatent"
+    }
+  },
+  "359": {
+    "inputs": {
+      "sampler_name": "euler_cfg_pp"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "360": {
+    "inputs": {
+      "sigmas": "0.85, 0.7250, 0.4219, 0.0"
+    },
+    "class_type": "ManualSigmas",
+    "_meta": {
+      "title": "ManualSigmas"
+    }
+  },
+  "361": {
+    "inputs": {
+      "cfg": 1,
+      "model": [
+        "568",
+        0
+      ],
+      "positive": [
+        "363",
+        0
+      ],
+      "negative": [
+        "363",
+        1
+      ]
+    },
+    "class_type": "CFGGuider",
+    "_meta": {
+      "title": "CFG Guider"
+    }
+  },
+  "362": {
+    "inputs": {
+      "noise": [
+        "357",
+        0
+      ],
+      "guider": [
+        "376",
+        0
+      ],
+      "sampler": [
+        "366",
+        0
+      ],
+      "sigmas": [
+        "371",
+        0
+      ],
+      "latent_image": [
+        "393",
+        0
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "363": {
+    "inputs": {
+      "positive": [
+        "370",
+        0
+      ],
+      "negative": [
+        "370",
+        1
+      ],
+      "latent": [
+        "372",
+        0
+      ]
+    },
+    "class_type": "LTXVCropGuides",
+    "_meta": {
+      "title": "LTXVCropGuides"
+    }
+  },
+  "364": {
+    "inputs": {
+      "samples": [
+        "372",
+        0
+      ],
+      "upscale_model": [
+        "523",
+        0
+      ],
+      "vae": [
+        "520",
+        0
+      ]
+    },
+    "class_type": "LTXVLatentUpsampler",
+    "_meta": {
+      "title": "LTXVLatentUpsampler"
+    }
+  },
+  "365": {
+    "inputs": {
+      "strength": 1,
+      "bypass": false,
+      "vae": [
+        "520",
+        0
+      ],
+      "image": [
+        "383",
+        0
+      ],
+      "latent": [
+        "364",
+        0
+      ]
+    },
+    "class_type": "LTXVImgToVideoInplace",
+    "_meta": {
+      "title": "LTXVImgToVideoInplace"
+    }
+  },
+  "366": {
+    "inputs": {
+      "sampler_name": "euler_ancestral_cfg_pp"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "368": {
+    "inputs": {
+      "samples": [
+        "374",
+        1
+      ],
+      "audio_vae": [
+        "519",
+        0
+      ]
+    },
+    "class_type": "LTXVAudioVAEDecode",
+    "_meta": {
+      "title": "LTXV Audio VAE Decode"
+    }
+  },
+  "369": {
+    "inputs": {
+      "text": [
+        "507",
+        0
+      ],
+      "clip": [
+        "568",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "370": {
+    "inputs": {
+      "frame_rate": [
+        "386",
+        0
+      ],
+      "positive": [
+        "402",
+        1
+      ],
+      "negative": [
+        "402",
+        2
+      ]
+    },
+    "class_type": "LTXVConditioning",
+    "_meta": {
+      "title": "LTXVConditioning"
+    }
+  },
+  "371": {
+    "inputs": {
+      "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+    },
+    "class_type": "ManualSigmas",
+    "_meta": {
+      "title": "ManualSigmas"
+    }
+  },
+  "372": {
+    "inputs": {
+      "av_latent": [
+        "362",
+        0
+      ]
+    },
+    "class_type": "LTXVSeparateAVLatent",
+    "_meta": {
+      "title": "LTXVSeparateAVLatent"
+    }
+  },
+  "373": {
+    "inputs": {
+      "noise": [
+        "356",
+        0
+      ],
+      "guider": [
+        "361",
+        0
+      ],
+      "sampler": [
+        "359",
+        0
+      ],
+      "sigmas": [
+        "360",
+        0
+      ],
+      "latent_image": [
+        "358",
+        0
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "374": {
+    "inputs": {
+      "av_latent": [
+        "373",
+        0
+      ]
+    },
+    "class_type": "LTXVSeparateAVLatent",
+    "_meta": {
+      "title": "LTXVSeparateAVLatent"
+    }
+  },
+  "375": {
+    "inputs": {
+      "text": "text, subtitles, logo, still image, still video, no motion, static, frozen, blurry, low quality, distorted, bad anatomy, oversaturated, pixelated, low resolution, grainy, compression artifacts, jpeg artifacts, glitches, watermark, signature, copyright, deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, blurry teeth, disfigured teeth, \npc game, console game, video game, cartoon, childish, ugly",
+      "clip": [
+        "568",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "376": {
+    "inputs": {
+      "cfg": 1,
+      "model": [
+        "402",
+        0
+      ],
+      "positive": [
+        "370",
+        0
+      ],
+      "negative": [
+        "370",
+        1
+      ]
+    },
+    "class_type": "CFGGuider",
+    "_meta": {
+      "title": "CFG Guider"
+    }
+  },
+  "377": {
+    "inputs": {
+      "tile_size": 768,
+      "overlap": 64,
+      "temporal_size": 4096,
+      "temporal_overlap": 4,
+      "samples": [
+        "374",
+        0
+      ],
+      "vae": [
+        "520",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeTiled",
+    "_meta": {
+      "title": "VAE Decode (Tiled)"
+    }
+  },
+  "378": {
+    "inputs": {
+      "strength": 0.7,
+      "bypass": false,
+      "vae": [
+        "520",
+        0
+      ],
+      "image": [
+        "383",
+        0
+      ],
+      "latent": [
+        "390",
+        0
+      ]
+    },
+    "class_type": "LTXVImgToVideoInplace",
+    "_meta": {
+      "title": "LTXVImgToVideoInplace"
+    }
+  },
+  "382": {
+    "inputs": {
+      "longer_edge": 1536,
+      "images": [
+        "477",
+        0
+      ]
+    },
+    "class_type": "ResizeImagesByLongerEdge",
+    "_meta": {
+      "title": "Resize Images by Longer Edge (DEPRECATED)"
+    }
+  },
+  "383": {
+    "inputs": {
+      "img_compression": 18,
+      "image": [
+        "382",
+        0
+      ]
+    },
+    "class_type": "LTXVPreprocess",
+    "_meta": {
+      "title": "LTXV Preprocess"
+    }
+  },
+  "386": {
+    "inputs": {
+      "expression": "a",
+      "values.a": [
+        "433",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "Math Expression"
+    }
+  },
+  "390": {
+    "inputs": {
+      "width": [
+        "487",
+        1
+      ],
+      "height": [
+        "487",
+        2
+      ],
+      "length": [
+        "541",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLTXVLatentVideo",
+    "_meta": {
+      "title": "EmptyLTXVLatentVideo"
+    }
+  },
+  "393": {
+    "inputs": {
+      "video_latent": [
+        "378",
+        0
+      ],
+      "audio_latent": [
+        "401",
+        0
+      ]
+    },
+    "class_type": "LTXVConcatAVLatent",
+    "_meta": {
+      "title": "LTXVConcatAVLatent"
+    }
+  },
+  "401": {
+    "inputs": {
+      "frames_number": [
+        "541",
+        1
+      ],
+      "frame_rate": [
+        "386",
+        1
+      ],
+      "batch_size": 1,
+      "audio_vae": [
+        "519",
+        0
+      ]
+    },
+    "class_type": "LTXVEmptyLatentAudio",
+    "_meta": {
+      "title": "LTXV Empty Latent Audio"
+    }
+  },
+  "402": {
+    "inputs": {
+      "identity_guidance_scale": 3,
+      "start_percent": 0,
+      "end_percent": 1,
+      "model": [
+        "568",
+        0
+      ],
+      "positive": [
+        "369",
+        0
+      ],
+      "negative": [
+        "375",
+        0
+      ],
+      "reference_audio": [
+        "478",
+        0
+      ],
+      "audio_vae": [
+        "519",
+        0
+      ]
+    },
+    "class_type": "LTXVReferenceAudio",
+    "_meta": {
+      "title": "LTXV Reference Audio (ID-LoRA)"
+    }
+  },
+  "433": {
+    "inputs": {
+      "value": 24
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "FPS"
+    }
+  },
+  "447": {
+    "inputs": {
+      "model_name": "MelBandRoformer_fp16.safetensors"
+    },
+    "class_type": "MelBandRoFormerModelLoader",
+    "_meta": {
+      "title": "​"
+    }
+  },
+  "465": {
+    "inputs": {
+      "value": "[VISUAL]: <scene and appearance description>\n[SPEECH]: <exact words the person should say>\n[SOUNDS]: <speaker vocal style + ambient/environmental sounds>"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "ID-Lora Prompt Template"
+    }
+  },
+  "477": {
+    "inputs": {
+      "width": [
+        "577",
+        0
+      ],
+      "height": [
+        "577",
+        1
+      ],
+      "upscale_method": "nearest-exact",
+      "keep_proportion": "resize",
+      "pad_color": "0, 0, 0",
+      "crop_position": "center",
+      "divisible_by": 64,
+      "device": "cpu",
+      "image": [
+        "574:16",
+        0
+      ]
+    },
+    "class_type": "ImageResizeKJv2",
+    "_meta": {
+      "title": "Resize Image v2"
+    }
+  },
+  "478": {
+    "inputs": {
+      "start_index": 2,
+      "duration": 7,
+      "audio": [
+        "276",
+        0
+      ]
+    },
+    "class_type": "TrimAudioDuration",
+    "_meta": {
+      "title": "​"
+    }
+  },
+  "487": {
+    "inputs": {
+      "image": [
+        "477",
+        0
+      ]
+    },
+    "class_type": "GetImageSizeAndCount",
+    "_meta": {
+      "title": "Get Image Size & Count"
+    }
+  },
+  "491": {
+    "inputs": {
+      "unet_name": "ltx-2.3-22b-distilled-1.1-Q4_0.gguf"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
+    }
+  },
+  "493": {
+    "inputs": {
+      "tile_size": 768,
+      "overlap": 64,
+      "temporal_size": 4096,
+      "temporal_overlap": 4,
+      "samples": [
+        "499",
+        0
+      ],
+      "vae": [
+        "520",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeTiled",
+    "_meta": {
+      "title": "VAE Decode (Tiled)"
+    }
+  },
+  "494": {
+    "inputs": {
+      "samples": [
+        "499",
+        1
+      ],
+      "audio_vae": [
+        "519",
+        0
+      ]
+    },
+    "class_type": "LTXVAudioVAEDecode",
+    "_meta": {
+      "title": "LTXV Audio VAE Decode"
+    }
+  },
+  "499": {
+    "inputs": {
+      "av_latent": [
+        "362",
+        1
+      ]
+    },
+    "class_type": "LTXVSeparateAVLatent",
+    "_meta": {
+      "title": "LTXVSeparateAVLatent"
+    }
+  },
+  "503": {
+    "inputs": {
+      "audioUI": "",
+      "audio": [
+        "478",
+        0
+      ]
+    },
+    "class_type": "PreviewAudio",
+    "_meta": {
+      "title": "Folded · 5  ›"
+    }
+  },
+  "504": {
+    "inputs": {
+      "value": 0,
+      "width": [
+        "487",
+        1
+      ],
+      "height": [
+        "487",
+        2
+      ]
+    },
+    "class_type": "SolidMask",
+    "_meta": {
+      "title": "Create Solid Mask"
+    }
+  },
+  "505": {
+    "inputs": {
+      "samples": [
+        "506",
+        0
+      ],
+      "mask": [
+        "504",
+        0
+      ]
+    },
+    "class_type": "SetLatentNoiseMask",
+    "_meta": {
+      "title": "Set Latent Noise Mask"
+    }
+  },
+  "506": {
+    "inputs": {
+      "audio": [
+        "478",
+        0
+      ],
+      "audio_vae": [
+        "519",
+        0
+      ]
+    },
+    "class_type": "LTXVAudioVAEEncode",
+    "_meta": {
+      "title": "LTXV Audio VAE Encode"
+    }
+  },
+  "507": {
+    "inputs": {
+      "value": "[VISUAL]: A cinematic handheld medium close-up vlog shot of the same young woman from the reference image, preserving her exact facial features, almond-shaped hazel eyes, fair warm skin, long straight dark brown hair, elegant jawline, and natural beauty. She is dressed as a noblewoman in medieval Spain (late 13th century), wearing an intricately embroidered olive-green silk gown with gold trim and subtle medieval jewelry. She holds the camera at arm's length as if filming a modern travel vlog while walking through the bustling streets of medieval Toledo. Behind her are narrow cobblestone alleys, sandstone buildings, wooden balconies draped with colorful fabrics, market stalls selling bread, pottery, spices, and woven textiles, blacksmiths working, horses, townsfolk in authentic medieval clothing, monks, merchants, and castle guards moving naturally in the background. Warm golden afternoon sunlight creates beautiful volumetric rays and soft cinematic rim lighting on her hair. The camera exhibits realistic handheld micro-movements, natural walking bounce, subtle autofocus breathing, slight exposure adaptation, and shallow depth of field while maintaining continuous eye contact. The woman occasionally smiles, gestures toward the market behind her, and looks around with genuine curiosity while continuing to address the audience. Ultra-photorealistic, historically accurate medieval Spain, 35mm cinema lens, f/2.0, HDR, natural colors, high dynamic range, soft film grain, documentary realism, immersive cinematic atmosphere.\n\n[SPEECH]: Welcome, everyone! Today I'm taking you with me through the streets of medieval Spain. Behind me is one of the busiest marketplaces in Toledo, where merchants from across Europe, North Africa, and the Mediterranean come to trade spices, fabrics, and handcrafted goods. The streets are crowded, the air smells of fresh bread and wood smoke, and every corner has a story to tell. Let's explore what daily life was really like more than seven hundred years ago.\n\n[SOUNDS]: Natural outdoor medieval ambience with lively market chatter in the distance, footsteps on cobblestone streets, horses trotting past, wagon wheels creaking, blacksmith hammering metal, merchants calling to customers, birds overhead, light wind, church bells ringing occasionally, fabric fluttering from balconies. The speaker has a warm, engaging, conversational vlog tone, speaking close to the microphone with clean, clear voice capture. Soft medieval instrumental background music featuring lute, vihuela, recorder, and gentle frame drum plays quietly beneath the dialogue without overpowering the narration."
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Video Prompt"
+    }
+  },
+  "514": {
+    "inputs": {
+      "clip_name1": "gemma-3-12b-it-abliterated-sikaworld-high-fidelity-edition.safetensors",
+      "clip_name2": "ltx-2.3_text_projection_bf16.safetensors",
+      "type": "ltxv"
+    },
+    "class_type": "DualCLIPLoaderGGUF",
+    "_meta": {
+      "title": "CLIP  ( Gemma GGUF+ LTX embedding)"
+    }
+  },
+  "516": {
+    "inputs": {
+      "clip_name1": "gemma_3_12B_it_fp4_mixed.safetensors",
+      "clip_name2": "ltx-2.3_text_projection_bf16.safetensors",
+      "type": "ltxv",
+      "device": "default"
+    },
+    "class_type": "DualCLIPLoader",
+    "_meta": {
+      "title": "DualCLIPLoader"
+    }
+  },
+  "519": {
+    "inputs": {
+      "vae_name": "LTX 2\\LTX23_audio_vae_bf16.safetensors",
+      "device": "main_device",
+      "weight_dtype": "bf16"
+    },
+    "class_type": "VAELoaderKJ",
+    "_meta": {
+      "title": "​"
+    }
+  },
+  "520": {
+    "inputs": {
+      "vae_name": "LTX 2\\LTX23_video_vae_bf16.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Audio and Video VAE · 3  ›"
+    }
+  },
+  "523": {
+    "inputs": {
+      "model_name": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
+    },
+    "class_type": "LatentUpscaleModelLoader",
+    "_meta": {
+      "title": "Load Latent Upscale Model"
+    }
+  },
+  "540": {
+    "inputs": {
+      "value": 16
+    },
+    "class_type": "INTConstant",
+    "_meta": {
+      "title": "Length in seconds"
+    }
+  },
+  "541": {
+    "inputs": {
+      "expression": "((round((a * b -1) / 8)) * 8) + 1 ",
+      "variables.a": [
+        "540",
+        0
+      ],
+      "variables.b": [
+        "433",
+        0
+      ]
+    },
+    "class_type": "SimpleCalculatorKJ",
+    "_meta": {
+      "title": "SimpleCalculatorKJ"
+    }
+  },
+  "545": {
+    "inputs": {
+      "value": "[VISUAL]: Opens with a medium close-up, camera slowly pushes in toward the character. An elderly man with deep wrinkles, piercing blue eyes, and a long thick white beard, wearing a worn gray cap and dark rugged clothing, looks directly into the camera. His expression is calm and thoughtful, his mouth opens and closes naturally as he speaks, with subtle head movements and slight eyebrow expressions. Soft natural lighting highlights the texture of his skin and beard. The background is slightly blurred, suggesting an outdoor coastal or rural environment with muted earthy tones.\n[SPEECH]: I’ve seen many places in my life… but somehow, every new place still feels like the first time. Maybe next… a quiet beach, warm sun, and the sound of waves… yes, that would be nice.\n[SOUNDS]: calm elderly British male voice, slightly rough and deep tone, natural outdoor ambience with soft wind and distant ocean waves, low background noise"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Text String (Multiline)"
+    }
+  },
+  "562": {
+    "inputs": {
+      "resize_type": "scale by multiplier",
+      "resize_type.scale": 2,
+      "quality": "ULTRA",
+      "images": [
+        "377",
+        0
+      ]
+    },
+    "class_type": "RTXVideoSuperResolution",
+    "_meta": {
+      "title": "RTX Video Super Resolution"
+    }
+  },
+  "563": {
+    "inputs": {
+      "fps": [
+        "433",
+        0
+      ],
+      "bit_depth": 10,
+      "images": [
+        "562",
+        0
+      ],
+      "audio": [
+        "368",
+        0
+      ]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "Create Video"
+    }
+  },
+  "565": {
+    "inputs": {
+      "video": [
+        "563",
+        0
+      ]
+    },
+    "class_type": "GetVideoComponents",
+    "_meta": {
+      "title": "Get Video Components"
+    }
+  },
+  "566": {
+    "inputs": {
+      "frame_rate": [
+        "565",
+        2
+      ],
+      "loop_count": 0,
+      "filename_prefix": "LTX23_vlog",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "565",
+        0
+      ],
+      "audio": [
+        "565",
+        1
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  },
+  "568": {
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "lora_1": {
+        "on": true,
+        "lora": "ltx2\\ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+        "strength": 0.6
+      },
+      "lora_2": {
+        "on": true,
+        "lora": "ltx2\\Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+        "strength": 0.7
+      },
+      "lora_3": {
+        "on": true,
+        "lora": "ltx2\\LTX-2.3-OmniNFT-RL-Lora_bf16.safetensors",
+        "strength": 0.9
+      },
+      "lora_4": {
+        "on": true,
+        "lora": "ltx2\\LTX2.3_Crisp_Enhance.safetensors",
+        "strength": 0.8
+      },
+      "lora_5": {
+        "on": true,
+        "lora": "ltx2\\ltx2.3_upscale_ic-lora_06250.safetensors",
+        "strength": 0.85
+      },
+      "lora_6": {
+        "on": true,
+        "lora": "ltx2\\ltx-2.3-id-lora-celebvhq-3k.safetensors",
+        "strength": 0.88
+      },
+      "➕ Add Lora": "",
+      "model": [
+        "491",
+        0
+      ],
+      "clip": [
+        "514",
+        0
+      ]
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "Power Lora Loader (rgthree)"
+    }
+  },
+  "572": {
+    "inputs": {
+      "image": [
+        "575",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "Folded · 2  ›"
+    }
+  },
+  "573": {
+    "inputs": {
+      "image": "ComfyUI_00196.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "575": {
+    "inputs": {
+      "resize_type": "scale longer dimension",
+      "resize_type.longer_size": 1080,
+      "scale_method": "area",
+      "input": [
+        "573",
+        0
+      ]
+    },
+    "class_type": "ResizeImageMaskNode",
+    "_meta": {
+      "title": "​"
+    }
+  },
+  "577": {
+    "inputs": {
+      "resolution": "512x910 (9:16)"
+    },
+    "class_type": "Aspect Ratio (All) [RvTools]",
+    "_meta": {
+      "title": "Aspect Ratio (All)"
+    }
+  },
+  "579": {
+    "inputs": {
+      "value": " A cinematic handheld close-up vlog shot of the same young woman from the reference image,1girl preserving her exact facial features, almond-shaped hazel eyes, fair warm skin, long straight dark brown hair, elegant jawline, and natural beauty. She is dressed as a noblewoman in medieval Spain (late 13th century), wearing an intricately embroidered olive-green silk gown with gold trim and subtle medieval jewelry. She holds the camera at arm's length as if filming a modern travel vlog while walking through the bustling streets of medieval Toledo. Behind her are narrow cobblestone alleys, sandstone buildings, wooden balconies draped with colorful fabrics, market stalls selling bread, pottery, spices, and woven textiles, blacksmiths working, horses, townsfolk in authentic medieval clothing, monks, merchants, and castle guards moving naturally in the background. Warm golden afternoon sunlight creates beautiful volumetric rays and soft cinematic rim lighting on her hair. The camera exhibits realistic handheld micro-movements, natural walking bounce, subtle autofocus breathing, slight exposure adaptation, and shallow depth of field while maintaining continuous eye contact. The woman occasionally smiles, gestures toward the market behind her, and looks around with genuine curiosity while continuing to address the audience. Ultra-photorealistic, historically accurate medieval Spain, 35mm cinema lens, f/2.0, HDR, natural colors, high dynamic range, soft film grain, documentary realism, immersive cinematic atmosphere."
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Image Prompt"
+    }
+  },
+  "574:9": {
+    "inputs": {
+      "clip_name": "umt5_xxl_fp16.safetensors",
+      "type": "wan",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "574:7": {
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "574:29": {
+    "inputs": {
+      "lora_name": "wan\\Wan21_T2V_14B_lightx2v_cfg_step_distill_lora_rank32.safetensors",
+      "strength_model": 1.5,
+      "model": [
+        "574:12",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "574:4": {
+    "inputs": {
+      "text": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+      "clip": [
+        "574:9",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "574:17": {
+    "inputs": {
+      "step": [
+        "574:68",
+        0
+      ],
+      "sigmas": [
+        "574:18",
+        0
+      ]
+    },
+    "class_type": "SplitSigmas",
+    "_meta": {
+      "title": "SplitSigmas"
+    }
+  },
+  "574:27": {
+    "inputs": {
+      "sampler_name": "res_multistep"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "574:5": {
+    "inputs": {
+      "unet_name": "VIDEO\\WAN\\2.2\\wan2.2_bernini_r_high_noise_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "574:11": {
+    "inputs": {
+      "lora_name": "wan\\Wan21_T2V_14B_lightx2v_cfg_step_distill_lora_rank32.safetensors",
+      "strength_model": 3,
+      "model": [
+        "574:5",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "574:12": {
+    "inputs": {
+      "unet_name": "VIDEO\\WAN\\2.2\\wan2.2_bernini_r_low_noise_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "574:16": {
+    "inputs": {
+      "samples": [
+        "574:15",
+        0
+      ],
+      "vae": [
+        "574:7",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "574:19": {
+    "inputs": {
+      "add_noise": true,
+      "noise_seed": 760158307679474,
+      "cfg": [
+        "574:72",
+        0
+      ],
+      "model": [
+        "574:52",
+        0
+      ],
+      "positive": [
+        "574:50",
+        0
+      ],
+      "negative": [
+        "574:50",
+        1
+      ],
+      "sampler": [
+        "574:27",
+        0
+      ],
+      "sigmas": [
+        "574:17",
+        0
+      ],
+      "latent_image": [
+        "574:50",
+        2
+      ]
+    },
+    "class_type": "SamplerCustom",
+    "_meta": {
+      "title": "SamplerCustom"
+    }
+  },
+  "574:18": {
+    "inputs": {
+      "scheduler": "simple",
+      "steps": [
+        "574:64",
+        0
+      ],
+      "denoise": 1,
+      "model": [
+        "574:12",
+        0
+      ]
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "BasicScheduler"
+    }
+  },
+  "574:15": {
+    "inputs": {
+      "add_noise": false,
+      "noise_seed": 0,
+      "cfg": [
+        "574:72",
+        0
+      ],
+      "model": [
+        "574:53",
+        0
+      ],
+      "positive": [
+        "574:50",
+        0
+      ],
+      "negative": [
+        "574:50",
+        1
+      ],
+      "sampler": [
+        "574:27",
+        0
+      ],
+      "sigmas": [
+        "574:17",
+        1
+      ],
+      "latent_image": [
+        "574:19",
+        0
+      ]
+    },
+    "class_type": "SamplerCustom",
+    "_meta": {
+      "title": "SamplerCustom"
+    }
+  },
+  "574:50": {
+    "inputs": {
+      "width": [
+        "572",
+        0
+      ],
+      "height": [
+        "572",
+        1
+      ],
+      "length": 1,
+      "batch_size": 1,
+      "ref_max_size": 848,
+      "positive": [
+        "574:3",
+        0
+      ],
+      "negative": [
+        "574:4",
+        0
+      ],
+      "vae": [
+        "574:7",
+        0
+      ],
+      "source_video": [
+        "575",
+        0
+      ]
+    },
+    "class_type": "BerniniConditioning",
+    "_meta": {
+      "title": "Bernini Conditioning"
+    }
+  },
+  "574:3": {
+    "inputs": {
+      "text": [
+        "574:59",
+        0
+      ],
+      "clip": [
+        "574:9",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "574:53": {
+    "inputs": {
+      "switch": [
+        "574:70",
+        0
+      ],
+      "on_false": [
+        "574:12",
+        0
+      ],
+      "on_true": [
+        "574:29",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch (Low Noise)"
+    }
+  },
+  "574:54": {
+    "inputs": {
+      "choice": "Default",
+      "index": 0,
+      "option1": "Default",
+      "option2": "Text to Image",
+      "option3": "Text to Video",
+      "option4": "Image Editing",
+      "option5": "Subject to Image",
+      "option6": ""
+    },
+    "class_type": "CustomCombo",
+    "_meta": {
+      "title": "Custom Combo"
+    }
+  },
+  "574:57:1": {
+    "inputs": {
+      "source": [
+        "574:57:56",
+        0
+      ]
+    },
+    "class_type": "PreviewAny",
+    "_meta": {
+      "title": "Preview as Text"
+    }
+  },
+  "574:57:2": {
+    "inputs": {
+      "string": "You are a helpful assistant.\nYou are a helpful assistant specialized in text-to-image generation.\nYou are a helpful assistant specialized in text-to-video generation.\nYou are a helpful assistant specialized in image editing.\nYou are a helpful assistant specialized in subject-to-image generation.",
+      "regex_pattern": [
+        "574:57:8",
+        0
+      ],
+      "mode": "First Group",
+      "case_insensitive": false,
+      "multiline": false,
+      "dotall": false,
+      "group_index": 1
+    },
+    "class_type": "RegexExtract",
+    "_meta": {
+      "title": "Extract Text"
+    }
+  },
+  "574:57:56": {
+    "inputs": {
+      "value": [
+        "574:54",
+        1
+      ]
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Int (line index)"
+    }
+  },
+  "574:57:8": {
+    "inputs": {
+      "string": "^(?:[^\\n]*\\n){index}([^\\n]*)(?:\\n|$)",
+      "find": "index",
+      "replace": [
+        "574:57:1",
+        0
+      ]
+    },
+    "class_type": "StringReplace",
+    "_meta": {
+      "title": "Replace Text"
+    }
+  },
+  "574:59": {
+    "inputs": {
+      "string_a": [
+        "574:57:2",
+        0
+      ],
+      "string_b": [
+        "574:120",
+        0
+      ],
+      "delimiter": ""
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "Concatenate Text"
+    }
+  },
+  "574:62": {
+    "inputs": {
+      "value": 40
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Int (Steps)"
+    }
+  },
+  "574:64": {
+    "inputs": {
+      "switch": [
+        "574:70",
+        0
+      ],
+      "on_false": [
+        "574:62",
+        0
+      ],
+      "on_true": [
+        "574:63",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch (Steps)"
+    }
+  },
+  "574:66": {
+    "inputs": {
+      "value": 20
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Int (Split Steps)"
+    }
+  },
+  "574:68": {
+    "inputs": {
+      "switch": [
+        "574:70",
+        0
+      ],
+      "on_false": [
+        "574:66",
+        0
+      ],
+      "on_true": [
+        "574:67",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch (Low Steps)"
+    }
+  },
+  "574:72": {
+    "inputs": {
+      "switch": [
+        "574:70",
+        0
+      ],
+      "on_false": [
+        "574:71",
+        0
+      ],
+      "on_true": [
+        "574:73",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch (CFG)"
+    }
+  },
+  "574:73": {
+    "inputs": {
+      "value": 1
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Float (CFG)"
+    }
+  },
+  "574:70": {
+    "inputs": {
+      "value": true
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Boolean (Enable Turbo LoRA?)"
+    }
+  },
+  "574:52": {
+    "inputs": {
+      "switch": [
+        "574:70",
+        0
+      ],
+      "on_false": [
+        "574:5",
+        0
+      ],
+      "on_true": [
+        "574:11",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch (High Noise)"
+    }
+  },
+  "574:120": {
+    "inputs": {
+      "value": [
+        "579",
+        0
+      ]
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Text Multiline (User Prompt)"
+    }
+  },
+  "574:71": {
+    "inputs": {
+      "value": 5
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Float (CFG)"
+    }
+  },
+  "574:63": {
+    "inputs": {
+      "value": 12
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Int (Steps)"
+    }
+  },
+  "574:67": {
+    "inputs": {
+      "value": 8
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Int (Split Steps)"
+    }
+  }
+}

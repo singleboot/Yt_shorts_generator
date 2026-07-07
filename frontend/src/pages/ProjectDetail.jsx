@@ -98,6 +98,7 @@ function ProjectDetail() {
   const [suggestedTopics, setSuggestedTopics] = useState([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [trending, setTrending] = useState(false);
+  const [trendingSource, setTrendingSource] = useState('web');
   const [trendingTopics, setTrendingTopics] = useState([]);
   const [loadingTrending, setLoadingTrending] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -105,6 +106,14 @@ function ProjectDetail() {
   const audioRef = useRef(null);
   const [previewPlaying, setPreviewPlaying] = useState(null);
   const [videoCacheBuster, setVideoCacheBuster] = useState(Date.now());
+
+  // NotebookLLM / Sources state
+  const [sources, setSources] = useState([]);
+  const [addingSource, setAddingSource] = useState(false);
+  const [sourceTypeToAdd, setSourceTypeToAdd] = useState('webpage');
+  const [sourceValueToAdd, setSourceValueToAdd] = useState('');
+  const [sourceFileToAdd, setSourceFileToAdd] = useState(null);
+  const [loadingSources, setLoadingSources] = useState(false);
 
   const togglePreview = (type, id) => {
     const key = `${type}:${id}`;
@@ -129,7 +138,7 @@ function ProjectDetail() {
   const [showCalendar, setShowCalendar] = useState(false);
   const [selectedStyle, setSelectedStyle] = useState('none');
   const [loraStrength, setLoraStrength] = useState(0.8);
-  const [selectedVoice, setSelectedVoice] = useState('en-US-AriaNeural');
+  const [selectedVoice, setSelectedVoice] = useState('kokoro-am_adam');
   const [selectedMusic, setSelectedMusic] = useState('ambient');
   const [voiceCustom, setVoiceCustom] = useState('');    // custom voice description
   const [musicCustom, setMusicCustom] = useState('');    // custom ACE tag string
@@ -141,6 +150,9 @@ function ProjectDetail() {
   const [transitionDuration, setTransitionDuration] = useState(0.4);
   const [audioTransition, setAudioTransition] = useState('match_video');
   const [researchProvider, setResearchProvider] = useState('duckduckgo');
+  const [hostImage, setHostImage] = useState(null);
+  const [availableHosts, setAvailableHosts] = useState([]);
+  const [isVlog, setIsVlog] = useState(true);
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -175,9 +187,20 @@ function ProjectDetail() {
 
   const [pollInterval, setPollInterval] = useState(10000);
 
+  const loadHosts = async () => {
+    try {
+      const res = await api.get('/settings/hosts');
+      setAvailableHosts(Array.isArray(res.data) ? res.data : []);
+    } catch (e) {
+      console.error(e);
+      setAvailableHosts([]);
+    }
+  };
+
   // Load project & channels on mount or ID change
   useEffect(() => {
     loadProject();
+    loadHosts();
     api.get('/settings/youtube/channels').then(res => setChannels(res.data || [])).catch(() => setChannels([]));
   }, [id]);
 
@@ -231,7 +254,7 @@ function ProjectDetail() {
           const newAS = Object.fromEntries(Object.entries(newASRaw).filter(([, v]) => v !== undefined));
           const newCS = { style: captionStyle, font: captionFont, font_size: captionFontSize, color: captionColor, stroke_color: captionStrokeColor, stroke_width: captionStrokeWidth, animation: captionAnimation, all_caps: captionAllCaps, position: captionPosition, boxed: captionBoxed, box_color: captionBoxColor, box_opacity: captionBoxOpacity, box_shape: captionBoxShape };
 
-          await api.put(`/projects/${id}`, { visual_settings: newVS, audio_settings: newAS, caption_settings: newCS });
+          await api.put(`/projects/${id}`, { is_vlog: isVlog, visual_settings: newVS, audio_settings: newAS, caption_settings: newCS });
         } catch (e) {
           console.error('Auto-save failed', e);
         } finally {
@@ -244,7 +267,7 @@ function ProjectDetail() {
   useEffect(() => {
     if (!project) return;
     autoSaveProductionSettings();
-  }, [selectedStyle, loraStrength, selectedVoice, selectedMusic, voiceCustom, musicCustom, captionStyle, captionFont, captionFontSize, captionColor, captionStrokeColor, captionStrokeWidth, captionAnimation, captionPosition, captionAllCaps, captionBoxed, captionBoxColor, captionBoxOpacity, captionBoxShape, researchProvider]);
+  }, [isVlog, selectedStyle, loraStrength, selectedVoice, selectedMusic, voiceCustom, musicCustom, captionStyle, captionFont, captionFontSize, captionColor, captionStrokeColor, captionStrokeWidth, captionAnimation, captionPosition, captionAllCaps, captionBoxed, captionBoxColor, captionBoxOpacity, captionBoxShape, researchProvider]);
 
   const fetchSuggestions = async (cat) => {
     if (!cat) { setSuggestedTopics([]); return; }
@@ -259,12 +282,13 @@ function ProjectDetail() {
     }
   };
 
-  const fetchTrendingTopics = async () => {
+  const fetchTrendingTopics = async (explicitSource = null) => {
     if (!category) { showToast('Select a category first', 'warning'); return; }
     setLoadingTrending(true);
     setTrendingTopics([]);
     try {
-      const res = await api.post('/projects/trending-topics', { category });
+      const sourceToUse = explicitSource || trendingSource;
+      const res = await api.post('/projects/trending-topics', { category, source: sourceToUse });
       if (res.data?.topics?.length) {
         setTrendingTopics(res.data.topics);
         setTopic(res.data.topics[0]);
@@ -275,6 +299,79 @@ function ProjectDetail() {
       showToast('Failed to fetch trending topics', 'error');
     } finally {
       setLoadingTrending(false);
+    }
+  };
+
+  const loadSources = async () => {
+    try {
+      setLoadingSources(true);
+      const res = await api.get(`/projects/${id}/sources`);
+      if (Array.isArray(res.data)) {
+        setSources(res.data);
+      } else if (res.data && Array.isArray(res.data.sources)) {
+        setSources(res.data.sources);
+      } else {
+        setSources([]);
+      }
+    } catch (e) {
+      console.error(e);
+      setSources([]);
+    } finally {
+      setLoadingSources(false);
+    }
+  };
+
+  useEffect(() => {
+    if (id) loadSources();
+  }, [id]);
+
+  const handleAddSource = async () => {
+    if (sourceTypeToAdd !== 'pdf' && !sourceValueToAdd.trim()) {
+      showToast('Please enter a valid URL', 'warning');
+      return;
+    }
+    if (sourceTypeToAdd === 'pdf' && !sourceFileToAdd) {
+      showToast('Please select a PDF file', 'warning');
+      return;
+    }
+    setAddingSource(true);
+    try {
+      const formData = new FormData();
+      formData.append('source_type', sourceTypeToAdd);
+      if (sourceTypeToAdd === 'pdf') {
+        formData.append('file', sourceFileToAdd);
+      } else {
+        formData.append('source_value', sourceValueToAdd.trim());
+      }
+      const res = await api.post(`/projects/${id}/sources`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      if (res.data.status === 'success') {
+        showToast('Source added successfully');
+        setSourceValueToAdd('');
+        setSourceFileToAdd(null);
+        loadSources();
+      } else {
+        showToast(res.data.message || 'Failed to add source', 'error');
+      }
+    } catch (e) {
+      showToast(e.response?.data?.detail || e.message || 'Failed to add source', 'error');
+    } finally {
+      setAddingSource(false);
+    }
+  };
+
+  const handleDeleteSource = async (sourceId) => {
+    if (window.confirm('Are you sure you want to delete this source? It will no longer be used for research.')) {
+      try {
+        const res = await api.delete(`/projects/${id}/sources/${sourceId}`);
+        if (res.data.status === 'success') {
+          showToast('Source deleted');
+          loadSources();
+        }
+      } catch (e) {
+        showToast('Failed to delete source', 'error');
+      }
     }
   };
 
@@ -307,7 +404,7 @@ function ProjectDetail() {
             }
             setSelectedStyle(vs.ai_style || 'none');
             setLoraStrength(vs.lora_strength ?? 0.8);
-            setSelectedVoice(as.voice_id || 'en-US-AriaNeural');
+            setSelectedVoice(as.voice_id || 'kokoro-am_adam');
             setSelectedMusic(as.music_genre || 'ambient');
             setVoiceCustom(as.voice_custom || '');
             setMusicCustom(as.music_custom || '');
@@ -317,6 +414,8 @@ function ProjectDetail() {
             setTransitionDuration(vs.transition_duration ?? 0.4);
             setAudioTransition(vs.audio_transition || 'match_video');
             setResearchProvider(vs.research_provider || 'duckduckgo');
+            setHostImage(projRes.data.host_image || null);
+            setIsVlog(projRes.data.is_vlog ?? true);
             const cs = projRes.data.caption_settings || {};
             setCaptionStyle(cs.style || 'standard');
             setCaptionFont(cs.font || 'Arial-Bold');
@@ -585,7 +684,7 @@ function ProjectDetail() {
     }
   };
 
-  const handleGenerateOrCancel = () => {
+  const handleGenerateOrCancel = async () => {
     if (generatingScripts) {
       handleCancelScripts();
       return;
@@ -594,6 +693,10 @@ function ProjectDetail() {
       handleCancelVideos();
       return;
     }
+    
+    // Save project before generating so the backend has the latest ai_style and host_image
+    await handleSaveProject();
+    
     const hasScripts = videos.filter(v => v.script).length > 0;
     const hasVideos = videos.filter(v => v.upload || v.job).length > 0;
     if (!hasScripts) {
@@ -606,6 +709,9 @@ function ProjectDetail() {
   };
 
   const handleRegenScript = async (videoIndex) => {
+    // Save project before regenerating so the backend has the latest ai_style
+    await handleSaveProject();
+    
     // Set regenerating flag so the card shows a spinner instead of disappearing
     regeneratingRef.current = true;
     setVideos(prev => prev.map(v =>
@@ -639,6 +745,9 @@ function ProjectDetail() {
   };
 
   const handleGenerateSingleVideo = async (videoIndex) => {
+    // Save project before generating so the backend has the latest ai_style and host_image
+    await handleSaveProject();
+    
     try {
       await api.post(`/projects/${id}/videos/${videoIndex}/generate`);
       showToast(`Generating video #${videoIndex + 1}...`);
@@ -646,6 +755,16 @@ function ProjectDetail() {
       loadProject();
     } catch (e) {
       showToast('Failed to start video generation', 'error');
+    }
+  };
+
+  const handleAssembleVideo = async (videoIndex) => {
+    try {
+      await api.post(`/projects/${id}/videos/${videoIndex}/reassemble`);
+      showToast(`Assembling video #${videoIndex + 1}...`);
+      loadProject();
+    } catch (e) {
+      showToast('Failed to start assembly', 'error');
     }
   };
 
@@ -763,8 +882,8 @@ function ProjectDetail() {
       };
       const newASRaw = { ...(project.audio_settings || {}), voice_id: selectedVoice, voice_custom: voiceCustom || undefined, music_genre: selectedMusic, music_custom: musicCustom || undefined };
       const newAS = Object.fromEntries(Object.entries(newASRaw).filter(([, v]) => v !== undefined));
-      await api.put(`/projects/${id}`, { visual_settings: newVS, audio_settings: newAS });
-      setProject(prev => ({ ...prev, visual_settings: newVS, audio_settings: newAS }));
+      await api.put(`/projects/${id}`, { visual_settings: newVS, audio_settings: newAS, host_image: hostImage });
+      setProject(prev => ({ ...prev, visual_settings: newVS, audio_settings: newAS, host_image: hostImage }));
     } catch (e) {
       console.error('Failed to save production settings', e);
     }
@@ -792,6 +911,7 @@ function ProjectDetail() {
         source_type: sourceType,
         source_value: sourceType === 'topic' ? topic : url,
         category,
+        host_image: hostImage,
         visual_settings: newVS,
         audio_settings: newAS,
         caption_settings: newCS,
@@ -810,7 +930,7 @@ function ProjectDetail() {
     setTrendingNowLoading(true);
     try {
       const res = await api.post(`/projects/${id}/trending-now`, {
-        category, video_count: genCount, duration,
+        category, video_count: genCount, duration, source: trendingSource,
       });
       if (res.data.status === 'success') {
         showToast(`Trending: "${res.data.trending_topic}" - generating ${res.data.video_count} videos...`);
@@ -1136,6 +1256,83 @@ function ProjectDetail() {
         </div>
       </div>
 
+      {/* Knowledge Base / Sources */}
+      <div className="neo-card mb-6 overflow-hidden">
+        <div className="w-full flex items-center justify-between px-5 py-3 border-b border-[#252A33]">
+          <span className="flex items-center gap-2">
+            <Globe className="h-4 w-4 text-[#C6F11D]" />
+            <span className="text-sm font-bold text-[#F5F5F5]">Knowledge Base (NotebookLLM)</span>
+            <span className="text-[10px] text-[#5F6772] font-normal hidden sm:inline">(Provide context for the AI from multiple sources)</span>
+          </span>
+        </div>
+        <div className="px-5 py-4 space-y-4">
+          {loadingSources ? (
+            <div className="text-xs text-[#9AA0A6] flex items-center gap-2"><Loader2 className="h-3 w-3 animate-spin"/> Loading sources...</div>
+          ) : !Array.isArray(sources) || sources.length === 0 ? (
+            <div className="text-xs text-[#5F6772]">No sources added yet. The AI will rely on its general knowledge or the selected topic/URL below.</div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {sources?.map(src => (
+                <div key={src?.id || Math.random()} className="flex items-center justify-between bg-[#050608] border border-[#252A33] px-3 py-2 rounded-lg">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {src?.source_type === 'pdf' ? <FileText className="h-4 w-4 text-[#FF5757] shrink-0" /> : <Globe className="h-4 w-4 text-[#3D82F6] shrink-0" />}
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-sm text-[#F5F5F5] truncate">{src?.source_name || 'Unknown'}</span>
+                      <span className="text-[10px] text-[#9AA0A6] truncate">{src?.source_type?.toUpperCase()} • {src?.created_at ? new Date(src.created_at).toLocaleDateString() : ''}</span>
+                    </div>
+                  </div>
+                  <button onClick={() => handleDeleteSource(src?.id)} className="text-[#FF5757] hover:text-[#FF7777] p-1 bg-[rgba(255,87,87,0.1)] hover:bg-[rgba(255,87,87,0.2)] rounded-md transition-colors">
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="bg-[#0E1116] border border-[#252A33] rounded-xl p-4 mt-2">
+            <h4 className="text-xs font-semibold text-[#9AA0A6] uppercase tracking-wider mb-3">Add New Source</h4>
+            <div className="flex items-start gap-3 flex-col sm:flex-row">
+              <select 
+                value={sourceTypeToAdd} 
+                onChange={(e) => setSourceTypeToAdd(e.target.value)}
+                className="bg-[#050608] text-xs text-[#F5F5F5] border border-[#252A33] rounded-lg px-3 py-2 w-full sm:w-auto"
+              >
+                <option value="webpage">Webpage URL</option>
+                <option value="youtube_url">YouTube URL</option>
+                <option value="pdf">PDF Document</option>
+              </select>
+              
+              <div className="flex-1 w-full">
+                {sourceTypeToAdd === 'pdf' ? (
+                  <input 
+                    type="file" 
+                    accept=".pdf"
+                    onChange={(e) => setSourceFileToAdd(e.target.files[0])}
+                    className="w-full text-xs text-[#9AA0A6] file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-[rgba(198,241,29,0.1)] file:text-[#C6F11D] hover:file:bg-[rgba(198,241,29,0.2)] cursor-pointer"
+                  />
+                ) : (
+                  <input 
+                    type="url" 
+                    value={sourceValueToAdd}
+                    onChange={(e) => setSourceValueToAdd(e.target.value)}
+                    placeholder={sourceTypeToAdd === 'youtube_url' ? "https://youtube.com/watch?v=..." : "https://example.com/article"}
+                    className="w-full px-3 py-2 rounded-lg bg-[#050608] border border-[#252A33] text-xs text-[#F5F5F5]"
+                  />
+                )}
+              </div>
+              <button 
+                onClick={handleAddSource}
+                disabled={addingSource}
+                className="neo-btn-secondary px-4 py-2 text-xs flex items-center justify-center gap-1 shrink-0 whitespace-nowrap w-full sm:w-auto"
+              >
+                {addingSource ? <Loader2 className="h-3 w-3 animate-spin"/> : <Sparkles className="h-3 w-3" />}
+                {addingSource ? 'Parsing...' : 'Add'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Generate Form — always visible, auto-collapsed in videos phase */}
       {(phase === 'setup' || phase === 'scripts' || phase === 'videos') && (
         <div className="neo-card mb-6 overflow-hidden">
@@ -1223,6 +1420,29 @@ function ProjectDetail() {
                         {loadingTrending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Globe className="h-3.5 w-3.5" />}
                         Trending{trending ? ' ON' : ''}
                       </button>
+                      
+                      {trending && (
+                        <div className="flex bg-[#0E1116] border border-[#252A33] rounded-lg overflow-hidden mt-2 inline-flex">
+                          <button
+                            onClick={() => { setTrendingSource('web'); fetchTrendingTopics('web'); }}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold transition-all duration-150 ${
+                              trendingSource === 'web' ? 'bg-[#252A33] text-[#F5F5F5]' : 'text-[#9AA0A6] hover:text-[#F5F5F5]'
+                            }`}
+                          >
+                            <Globe className="h-3 w-3" />
+                            Web
+                          </button>
+                          <button
+                            onClick={() => { setTrendingSource('youtube'); fetchTrendingTopics('youtube'); }}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold transition-all duration-150 ${
+                              trendingSource === 'youtube' ? 'bg-[#FF0000] text-white' : 'text-[#9AA0A6] hover:text-[#F5F5F5]'
+                            }`}
+                          >
+                            <Youtube className="h-3 w-3" />
+                            YouTube
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -1508,7 +1728,16 @@ function ProjectDetail() {
 
               {/* Production tabs: Style / Voice / Music */}
               <div className="border-t border-[#252A33] pt-4">
-                <div className="flex gap-2 mb-3">
+                <div className="flex flex-wrap gap-2 mb-3">
+                  <button
+                    onClick={() => setIsVlog(!isVlog)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all duration-150 ${
+                      isVlog ? 'bg-[#C6F11D] text-[#050608]' : 'bg-[#0E1116] text-[#9AA0A6] border border-[#252A33] hover:border-[#C6F11D]'
+                    }`}
+                  >
+                    <Video className="h-3.5 w-3.5" />
+                    Vlog Mode {isVlog ? 'ON' : 'OFF'}
+                  </button>
                   <button
                     onClick={() => setProductionTab(productionTab === 'style' ? null : 'style')}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all duration-150 ${
@@ -1566,7 +1795,41 @@ function ProjectDetail() {
                         </button>
                       ))}
                     </div>
-                    {selectedStyle !== 'none' && (
+                    {isVlog && (
+                      <div className="mt-4 pt-4 border-t border-[rgba(255,255,255,0.05)]">
+                        <label className="text-[10px] text-[#9AA0A6] block mb-2 font-semibold">Select Vlog Host</label>
+                        {(!Array.isArray(availableHosts) || availableHosts.length === 0) ? (
+                          <div className="text-[10px] text-[#FF5757]">No hosts available. Please add them in Settings.</div>
+                        ) : (
+                          <div className="flex gap-3 overflow-x-auto pb-2">
+                            {availableHosts.map(host => (
+                              <button
+                                key={host.filename}
+                                onClick={() => {
+                                  setHostImage(host.filename);
+                                  if (host.voice_id) {
+                                    setSelectedVoice(host.voice_id);
+                                  }
+                                }}
+                                className={`shrink-0 flex flex-col items-center gap-1 p-1 rounded-lg transition-all ${
+                                  hostImage === host.filename
+                                    ? 'bg-[rgba(198,241,29,0.12)] border border-[rgba(198,241,29,0.3)]'
+                                    : 'border border-transparent hover:bg-[#252A33]'
+                                }`}
+                              >
+                                <div className="w-16 h-16 rounded overflow-hidden">
+                                  <img src={`http://localhost:8002${host.url}`} className="w-full h-full object-cover" alt="host" />
+                                </div>
+                                <span className={`text-[9px] ${hostImage === host.filename ? 'text-[#C6F11D]' : 'text-[#9AA0A6]'}`}>
+                                  {host.name || (host.filename ? host.filename.split('.')[0] : 'Unknown')}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {selectedStyle !== 'none' && selectedStyle !== 'vlog' && (
                       <div className="mt-2">
                         <label className="text-[10px] text-[#9AA0A6] block mb-1">LoRA Strength: {loraStrength.toFixed(1)}</label>
                         <input
@@ -2120,6 +2383,7 @@ function ProjectDetail() {
                 mode={(video.job?.status === 'completed' || video.job?.status === 'running' || video.job?.status === 'queued' || video.upload?.video_url) ? 'video' : 'script'}
                 onRegenScript={handleRegenScript}
                 onGenerateVideo={!video.job || video.job.status === 'cancelled' || video.job.status === 'failed' ? handleGenerateSingleVideo : null}
+                onAssemble={handleAssembleVideo}
                 onRemovePlaceholder={generatingScripts ? handleRemovePlaceholder : null}
                 onCleanScenes={phase === 'videos' ? () => handleCleanScenes(video.index) : null}
                 requestConfirm={requestConfirm}

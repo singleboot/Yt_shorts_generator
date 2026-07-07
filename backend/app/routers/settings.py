@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 from pathlib import Path
@@ -375,3 +375,100 @@ async def preview_music(genre: str):
         if not path:
             raise HTTPException(500, "Failed to generate music preview")
     return FileResponse(str(output_path), media_type="audio/mpeg")
+
+@router.get("/hosts", response_model=list)
+def list_hosts():
+    """List available host images and their metadata in storage/hosts."""
+    import os, json
+    hosts_dir = Path(settings.STORAGE_DIR) / "hosts"
+    hosts_dir.mkdir(exist_ok=True)
+    
+    metadata_file = hosts_dir / "hosts.json"
+    metadata = {}
+    if metadata_file.exists():
+        try:
+            with open(metadata_file, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        except Exception:
+            pass
+
+    images = []
+    for f in hosts_dir.iterdir():
+        if f.is_file() and f.suffix.lower() in [".png", ".jpg", ".jpeg", ".webp"]:
+            host_meta = metadata.get(f.name, {})
+            images.append({
+                "filename": f.name,
+                "url": f"/storage/hosts/{f.name}",
+                "name": host_meta.get("name", f.stem),
+                "voice_id": host_meta.get("voice_id", "")
+            })
+    return images
+
+@router.post("/hosts", response_model=dict)
+async def upload_host(
+    file: UploadFile = File(...),
+    name: str = Form(None),
+    voice_id: str = Form(None)
+):
+    """Upload a new host image to storage/hosts and save metadata."""
+    import shutil, json
+    hosts_dir = Path(settings.STORAGE_DIR) / "hosts"
+    hosts_dir.mkdir(exist_ok=True)
+    
+    file_path = hosts_dir / file.filename
+    with file_path.open("wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+        
+    metadata_file = hosts_dir / "hosts.json"
+    metadata = {}
+    if metadata_file.exists():
+        try:
+            with open(metadata_file, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        except Exception:
+            pass
+            
+    metadata[file.filename] = {
+        "name": name or Path(file.filename).stem,
+        "voice_id": voice_id or ""
+    }
+    with open(metadata_file, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2)
+        
+    return {
+        "filename": file.filename,
+        "url": f"/storage/hosts/{file.filename}",
+        "name": metadata[file.filename]["name"],
+        "voice_id": metadata[file.filename]["voice_id"]
+    }
+
+@router.put("/hosts/{filename}", response_model=dict)
+def update_host(filename: str, body: dict):
+    import json
+    hosts_dir = Path(settings.STORAGE_DIR) / "hosts"
+    metadata_file = hosts_dir / "hosts.json"
+    metadata = {}
+    if metadata_file.exists():
+        try:
+            with open(metadata_file, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        except Exception:
+            pass
+            
+    if filename not in metadata:
+        metadata[filename] = {"name": Path(filename).stem, "voice_id": ""}
+        
+    if "name" in body:
+        metadata[filename]["name"] = body["name"]
+    if "voice_id" in body:
+        metadata[filename]["voice_id"] = body["voice_id"]
+        
+    with open(metadata_file, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2)
+        
+    return {
+        "status": "success",
+        "filename": filename,
+        "name": metadata[filename]["name"],
+        "voice_id": metadata[filename]["voice_id"]
+    }

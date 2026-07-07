@@ -1,0 +1,92 @@
+[
+  {
+    "word": "The",
+    "start": 0.102625,
+    "end": 0.286833
+  },
+  {
+    "word": "rivalry",
+    "start": 0.3,
+    "end": 0.826333
+  },
+  {
+    "word": "persisted",
+    "start": 0.839458,
+    "end": 1.471041
+  },
+  {
+    "word": "through",
+    "start": 1.484208,
+    "end": 1.655249
+  },
+  {
+    "word": "Copa",
+    "start": 1.668416,
+    "end": 2.063166
+  },
+  {
+    "word": "Am\u00e9rica",
+    "start": 2.076333,
+    "end": 2.549999
+  },
+  {
+    "word": "tournaments",
+    "start": 2.563166,
+    "end": 3.1026239999999996
+  },
+  {
+    "word": "and",
+    "start": 3.115791,
+    "end": 3.2605410000000004
+  },
+  {
+    "word": "friendlies",
+    "start": 3.273666,
+    "end": 3.944707
+  },
+  {
+    "word": "proving",
+    "start": 4.339458,
+    "end": 4.721041
+  },
+  {
+    "word": "that",
+    "start": 4.734208,
+    "end": 4.878958
+  },
+  {
+    "word": "great",
+    "start": 4.892125,
+    "end": 5.207916
+  },
+  {
+    "word": "football",
+    "start": 5.221041,
+    "end": 5.642081999999999
+  },
+  {
+    "word": "grudges",
+    "start": 5.65525,
+    "end": 6.063124999999999
+  },
+  {
+    "word": "never",
+    "start": 6.076333,
+    "end": 6.378958
+  },
+  {
+    "word": "truly",
+    "start": 6.392125,
+    "end": 6.786875
+  },
+  {
+    "word": "fade",
+    "start": 6.8,
+    "end": 7.076333
+  },
+  {
+    "word": "away",
+    "start": 7.089458,
+    "end": 7.589458
+  }
+]

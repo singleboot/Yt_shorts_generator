@@ -1,0 +1,210 @@
+﻿
+>     def _run_single_video_job_inner(self, db, job):
+          import json
+          job_id = job.id
+          def check_cancel():
+              """Returns True if the job was cancelled via /jobs/{id}/cancel.
+              Also interrupts the running ComfyUI prompt so generation halts
+              within a few seconds."""
+              if self.is_cancelled(job_id):
+                  # Make doubly sure ComfyUI is interrupted
+                  try:
+                      import asyncio as aio
+                      try:
+                          loop = aio.get_event_loop()
+                          if loop.is_running():
+                              import concurrent.futures
+                              with concurrent.futures.ThreadPoolExecutor() as pool:
+                                  pool.submit(aio.run, visuals_service.comfyui.interrupt()).result(timeout=5)
+                          else:
+                              loop.run_until_complete(visuals_service.comfyui.interrupt())
+                      except RuntimeError:
+                          aio.run(visuals_service.comfyui.interrupt())
+                  except Exception:
+                      pass
+                  return True
+              return False
+  
+          import asyncio as aio
+          
+          def run_async(coro):
+              try:
+                  loop = aio.get_event_loop()
+                  if loop.is_running():
+                      import concurrent.futures
+                      with concurrent.futures.ThreadPoolExecutor() as pool:
+                          future = pool.submit(aio.run, coro)
+                          return future.result()
+                  else:
+                      return loop.run_until_complete(coro)
+              except RuntimeError:
+                  return aio.run(coro)
+          
+          project = db.query(models.Project).get(job.project_id)
+          if not project:
+              return
+          
+          schedule_settings = json.loads(project.schedule_settings) if isinstance(project.schedule_settings, str) else 
+project.schedule_settings
+          visual_settings = json.loads(project.visual_settings) if isinstance(project.visual_settings, str) else 
+project.visual_settings
+          audio_settings = json.loads(project.audio_settings) if isinstance(project.audio_settings, str) else 
+project.audio_settings
+          caption_settings = json.loads(project.caption_settings) if isinstance(project.caption_settings, str) else 
+project.caption_settings
+          
+          duration = visual_settings.get("total_duration", 45)
+          video_count = schedule_settings.get("video_count", 1)
+          
+          # Extract video number from logs
+          try:
+              parts = job.logs.split("/")
+              video_num = int(parts[0].replace("Video ", ""))
+          except:
+              video_num = 1
+          
+          job.progress = 5
+          job.logs = f"Video {video_num}/{video_count} - Researching topic..."
+          db.commit()
+          telegram_bot.notify_job_status(job.id, job.logs, job.progress, job.status)
+          
+          # 1. Research topic (NotebookLM sources, URL mode, Reddit mode, or auto_research mode)
+          if project.sources:
+              compiled_parts = []
+              for src in project.sources:
+                  compiled_parts.append(f"=== SOURCE: {src.source_name} ({src.source_type}) ===\n{src.content or ''}")
+              web_content = "\n\n".join(compiled_parts)
+              topic = f"{project.name} part {video_num}"
+              research = {"topic": topic, "context": web_content}
+          elif project.source_type == "url" and project.source_value:
+              web_content = run_async(research_service.summarize_webpage(
+                  project.source_value,
+                  db=db,
+                  project_id=project.id,
+                  job_id=job.id,
+                  video_index=video_num - 1,
+              ))
+              topic = f"{project.name} part {video_num}"
+              research = {"topic": topic, "context": web_content}
+          elif project.source_type == "reddit" and project.source_value:
+              reddit_data = run_async(research_service.get_reddit_story(project.source_value))
+              story_title = reddit_data.get("title", "")
+              story_content = reddit_data.get("story", "")
+              subreddit_name = reddit_data.get("subreddit", "")
+              
+              web_content = f"Subreddit: r/{subreddit_name}\nTitle: {story_title}\nStory Content:\n{story_content}"
+              topic = f"Reddit Story: {story_title}"
+              research = {"topic": topic, "context": web_content}
+          else:
+              research = run_async(research_service.research_topic(
+                  f"{project.source_value} part {video_num}",
+                  project.category,
+                  db=db,
+                  project_id=project.id,
+                  job_id=job.id,
+                  video_index=video_num - 1,
+              ))
+          topic = research["topic"]
+  
+          job.progress = 15
+          job.logs = f"Video {video_num}/{video_count} - Checking for existing script..."
+          db.commit()
+  
+          # 2. Use the existing script if one is already saved for this video_index
+          #    (the user may have reviewed and approved it). Only run the LLM
+          #    script generation step if no script exists yet.
+          existing_script = db.query(models.Script).filter(
+              models.Script.project_id == project.id,
+              models.Script.video_index == video_num - 1
+          ).first()
+  
+          if existing_script and existing_script.scenes:
+              # Reuse the reviewed/approved script as-is
+              import json as _json
+              scenes_data = existing_script.scenes
+              if isinstance(scenes_data, str):
+                  scenes_data = _json.loads(scenes_data) if scenes_data else []
+              script_data = {
+                  "title": existing_script.title,
+                  "hook": (existing_script.content or "").split("\n\n")[0] if existing_script.content else "",
+                  "scenes": scenes_data,
+                  "hashtags": [h for h in (existing_script.hashtags or "").split(",") if h],
+                  "music_prompt": "",
+              }
+              job.logs = f"Video {video_num}/{video_count} - Using approved script"
+          else:
+              # 2b. No existing script -> generate a fresh one
+              job.logs = f"Video {video_num}/{video_count} - Generating script..."
+              db.commit()
+  
+              # Query previous scripts for duplication prevention
+              prev_scripts = db.query(models.Script).filter(
+                  models.Script.project_id == project.id,
+                  models.Script.video_index < video_num - 1
+              ).order_by(models.Script.video_index.asc()).all()
+  
+              prev_context_list = []
+              for ps in prev_scripts:
+                  prev_context_list.append(f"--- PREVIOUS PART {ps.video_index + 1} SCRIPT ---\nTitle: 
+{ps.title}\nContent:\n{ps.content}")
+              prev_scripts_context = "\n\n".join(prev_context_list)
+  
+              script_data = run_async(script_service.generate_script(
+                  topic=topic,
+                  category=project.category,
+                  context=research["context"],
+                  duration=duration,
+                  prev_scripts_context=prev_scripts_context
+              ))
+  
+          # 3. Save script (only if we generated a new one; otherwise the existing
+          #    script is the source of truth and we just touch its updated_at via
+          #    the job commit below)
+          if not existing_script or not existing_script.scenes:
+              max_serial = db.query(func.max(models.Script.global_serial)).scalar() or 0
+              script = models.Script(
+                  project_id=project.id,
+                  title=script_data.get("title", topic),
+                  content=script_data.get("hook", "") + "\n\n" + "\n".join([s["narration_text"] for s in 
+script_data.get("scenes", [])]),
+                  scenes=script_data.get("scenes", []),
+                  hashtags=",".join(script_data.get("hashtags", [])),
+                  status="approved",
+                  video_index=video_num - 1,
+                  global_serial=max_serial + 1
+              )
+              db.add(script)
+              db.commit()
+          else:
+              script = existing_script
+  
+          # RESUME: parse job.current_stage (set by the router when the user
+          # restarts a cancelled/failed job) and derive per-stage skip flags.
+          # The stage values are stable strings documented on the Job model.
+          # Stages that completed before the cancel should be skipped; the
+          # underlying files (scene clips, voice MP3s, music MP3, final MP4)
+          # persist on disk between runs so the "skip if file exists" check
+          # is the actual guard, not this flag.
+          def _parse_resume(stage_str):
+              """Returns (skipped_stages, partial_counts) from a current_stage value.
+              skipped_stages: set of stage names that are already done.
+              partial_counts: dict with int counts for stages that have sub-progress
+                              (e.g. {'scenes_t2v': 2} means scenes 0 and 1 are done).
+              """
+              skipped = set()
+              partial = {}
+              if not stage_str or stage_str == "completed":
+                  return skipped, partial
+              # Linear pipeline: research < script < voiceover < scenes_t2v < music < assembly
+              # voiceover is now BEFORE scenes_t2v so LTX renders exactly the right frame count
+              order = ["research", "script", "voiceover", "scenes_t2v", "music", "assembly"]
+              if ":" in stage_str:
+                  name, n = stage_str.split(":", 1)
+                  try:
+                      n = int(n)
+                  except ValueError:
+                      n = 0
+              else:
+                  name, n = stage_str, 0
+
+

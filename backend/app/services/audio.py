@@ -14,9 +14,41 @@ class AudioService:
     def __init__(self):
         self.voices_cache = None
         self._music_cache = {}
-    
+        self._kokoro = None
+
+    def _get_kokoro(self):
+        if self._kokoro is None:
+            try:
+                from kokoro_onnx import Kokoro
+                # Check backend directory or app dir for ONNX model & voice files
+                base_dir = Path(__file__).resolve().parent.parent.parent
+                model_path = base_dir / "kokoro-v1.0.onnx"
+                voices_path = base_dir / "voices-v1.0.bin"
+                if model_path.exists() and voices_path.exists():
+                    print(f"[Kokoro] Initializing local TTS engine with {model_path}")
+                    self._kokoro = Kokoro(str(model_path), str(voices_path))
+                else:
+                    print(f"[Kokoro] Model files not found at {model_path} or {voices_path}")
+            except Exception as e:
+                print(f"[Kokoro] Failed to initialize local Kokoro TTS engine: {e}")
+        return self._kokoro
+
     async def list_voices(self) -> List[Dict]:
         if self.voices_cache is None:
+            # High-quality Kokoro Voices (Local, fast)
+            kokoro_voices = [
+                {"id": "kokoro-af_heart", "name": "Kokoro Heart (Female - High Quality)", "gender": "Female", "locale": "English (US)", "provider": "kokoro_tts"},
+                {"id": "kokoro-af_bella", "name": "Kokoro Bella (Female - High Quality)", "gender": "Female", "locale": "English (US)", "provider": "kokoro_tts"},
+                {"id": "kokoro-af_nicole", "name": "Kokoro Nicole (Female - High Quality)", "gender": "Female", "locale": "English (US)", "provider": "kokoro_tts"},
+                {"id": "kokoro-af_sarah", "name": "Kokoro Sarah (Female - High Quality)", "gender": "Female", "locale": "English (US)", "provider": "kokoro_tts"},
+                {"id": "kokoro-af_sky", "name": "Kokoro Sky (Female - High Quality)", "gender": "Female", "locale": "English (US)", "provider": "kokoro_tts"},
+                {"id": "kokoro-am_adam", "name": "Kokoro Adam (Male - High Quality)", "gender": "Male", "locale": "English (US)", "provider": "kokoro_tts"},
+                {"id": "kokoro-am_fenrir", "name": "Kokoro Fenrir (Male - High Quality)", "gender": "Male", "locale": "English (US)", "provider": "kokoro_tts"},
+                {"id": "kokoro-am_puck", "name": "Kokoro Puck (Male - High Quality)", "gender": "Male", "locale": "English (US)", "provider": "kokoro_tts"},
+                {"id": "kokoro-bf_emma", "name": "Kokoro Emma (Female - UK - High Quality)", "gender": "Female", "locale": "English (UK)", "provider": "kokoro_tts"},
+                {"id": "kokoro-bm_george", "name": "Kokoro George (Male - UK - High Quality)", "gender": "Male", "locale": "English (UK)", "provider": "kokoro_tts"},
+            ]
+
             edge_voices = [
                 {"id": "en-US-AriaNeural", "name": "Microsoft Aria (Female)", "gender": "Female", "locale": "English (US)", "provider": "edge_tts"},
                 {"id": "en-US-GuyNeural", "name": "Microsoft Guy (Male)", "gender": "Male", "locale": "English (US)", "provider": "edge_tts"},
@@ -42,11 +74,68 @@ class AudioService:
             except Exception:
                 pass
             
-            self.voices_cache = qwen_voices + edge_voices
+            self.voices_cache = kokoro_voices + qwen_voices + edge_voices
         return self.voices_cache
     
     async def generate_voiceover(self, text: str, voice_id: str, output_path: Path,
                                   rate: str = "-5%", pitch: str = "+0Hz", volume: str = "+10%") -> bool:
+        # Determine if it's Kokoro TTS
+        is_kokoro = voice_id.lower().startswith("kokoro-")
+        if is_kokoro:
+            try:
+                kokoro_engine = self._get_kokoro()
+                if kokoro_engine:
+                    voice_name = voice_id.split("kokoro-")[-1]
+                    lang = "en-gb" if voice_name.startswith("b") else "en-us"
+                    print(f"[TTS] Using local Kokoro TTS engine for voice: {voice_name}")
+                    
+                    # Run CPU inference in executor so we don't block the async loop
+                    import soundfile as sf
+                    loop = asyncio.get_running_loop()
+                    def _infer():
+                        return kokoro_engine.create(text, voice=voice_name, speed=1.0, lang=lang)
+                    
+                    samples, sample_rate = await loop.run_in_executor(None, _infer)
+                    
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    # Kokoro produces audio samples; write out as a high-quality wav first
+                    temp_wav = output_path.with_suffix(".wav")
+                    sf.write(str(temp_wav), samples, sample_rate)
+                    
+                    # Convert wav to mp3 with ffmpeg to match pipeline
+                    import subprocess
+                    from app.services.video import _ensure_ffmpeg_on_path_once
+                    _ensure_ffmpeg_on_path_once()
+                    
+                    if output_path.exists():
+                        output_path.unlink()
+                        
+                    cmd = ["ffmpeg", "-y", "-i", str(temp_wav), "-codec:a", "libmp3lame", "-qscale:a", "2", str(output_path)]
+                    res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                    if temp_wav.exists():
+                        temp_wav.unlink()
+                        
+                    if res.returncode == 0 and output_path.exists() and output_path.stat().st_size > 1024:
+                        # Write word boundary JSON using distributed word lengths as approximation
+                        words = text.split()
+                        total_duration = len(samples) / float(sample_rate)
+                        word_dur = total_duration / max(1, len(words))
+                        words_data = []
+                        for i, w in enumerate(words):
+                            start_time = i * word_dur
+                            words_data.append({
+                                "word": w,
+                                "start": start_time,
+                                "end": start_time + word_dur
+                            })
+                        import json as _json
+                        json_path = output_path.with_suffix(".json")
+                        with open(str(json_path), "w", encoding="utf-8") as jf:
+                            _json.dump(words_data, jf, indent=2)
+                        return True
+            except Exception as e:
+                print(f"[TTS] Local Kokoro TTS failed: {e}. Falling back to edge-tts")
+        
         # Determine if it's a Qwen3 voice or Edge-TTS voice
         qwen_ids = ["aiden", "dylan", "eric", "ono_anna", "ryan", "serena", "sohee", "uncle_fu", "vivian"]
         is_qwen = voice_id.lower() in qwen_ids or any(q in voice_id.lower() for q in qwen_ids)
@@ -93,10 +182,14 @@ class AudioService:
             }
             
             effective_voice = voice_id
-            for qkey, fallback_v in fallback_mapping.items():
-                if qkey in voice_id.lower():
-                    effective_voice = fallback_v
-                    break
+            if is_kokoro:
+                # Fallback voice mapping for Kokoro voices
+                effective_voice = "en-US-JennyNeural" if "af_" in voice_id else "en-US-GuyNeural"
+            else:
+                for qkey, fallback_v in fallback_mapping.items():
+                    if qkey in voice_id.lower():
+                        effective_voice = fallback_v
+                        break
             
             # If the voice name is still not a valid Microsoft voice (doesn't contain "neural"), use default
             if "neural" not in effective_voice.lower():

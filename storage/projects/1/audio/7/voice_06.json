@@ -1,0 +1,77 @@
+[
+  {
+    "word": "From",
+    "start": 0.102625,
+    "end": 0.339458
+  },
+  {
+    "word": "limited",
+    "start": 0.352625,
+    "end": 0.773666
+  },
+  {
+    "word": "local",
+    "start": 0.786833,
+    "end": 1.128958
+  },
+  {
+    "word": "pitches",
+    "start": 1.142125,
+    "end": 1.6026660000000001
+  },
+  {
+    "word": "to",
+    "start": 1.615791,
+    "end": 1.734207
+  },
+  {
+    "word": "colossal",
+    "start": 1.747375,
+    "end": 2.2868329999999997
+  },
+  {
+    "word": "global",
+    "start": 2.3,
+    "end": 2.681583
+  },
+  {
+    "word": "venues",
+    "start": 2.69475,
+    "end": 3.3526249999999997
+  },
+  {
+    "word": "The",
+    "start": 4.263166,
+    "end": 4.473707
+  },
+  {
+    "word": "infrastructure",
+    "start": 4.486833,
+    "end": 5.328958
+  },
+  {
+    "word": "needed",
+    "start": 5.342125,
+    "end": 5.697375
+  },
+  {
+    "word": "grew",
+    "start": 5.710541,
+    "end": 5.960541
+  },
+  {
+    "word": "exponentially",
+    "start": 5.973666,
+    "end": 6.815791
+  },
+  {
+    "word": "with",
+    "start": 6.828958,
+    "end": 7.013166
+  },
+  {
+    "word": "participation",
+    "start": 7.026333,
+    "end": 7.986874
+  }
+]

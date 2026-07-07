@@ -1,87 +1,107 @@
 [
   {
-    "word": "Through",
+    "word": "From",
     "start": 0.102625,
     "end": 0.339458
   },
   {
-    "word": "every",
+    "word": "humble",
     "start": 0.352625,
-    "end": 0.69475
+    "end": 0.7605
   },
   {
-    "word": "era",
-    "start": 0.707875,
-    "end": 1.0105
-  },
-  {
-    "word": "and",
-    "start": 1.023666,
-    "end": 1.207874
-  },
-  {
-    "word": "every",
-    "start": 1.221041,
-    "end": 1.471041
-  },
-  {
-    "word": "continent",
-    "start": 1.484208,
-    "end": 2.063166
-  },
-  {
-    "word": "the",
-    "start": 2.40525,
-    "end": 2.536833
-  },
-  {
-    "word": "World",
-    "start": 2.55,
-    "end": 2.9052499999999997
-  },
-  {
-    "word": "Cup",
-    "start": 2.918416,
-    "end": 3.1947490000000003
-  },
-  {
-    "word": "remains",
-    "start": 3.207875,
-    "end": 3.642083
-  },
-  {
-    "word": "history\u2019s",
-    "start": 3.65525,
-    "end": 4.2605
-  },
-  {
-    "word": "ultimate",
-    "start": 4.273666,
-    "end": 4.707874
-  },
-  {
-    "word": "testament",
-    "start": 4.721041,
-    "end": 5.313166
+    "word": "origins",
+    "start": 0.773666,
+    "end": 1.260499
   },
   {
     "word": "to",
-    "start": 5.326333,
-    "end": 5.418458
+    "start": 1.273666,
+    "end": 1.392082
+  },
+  {
+    "word": "global",
+    "start": 1.40525,
+    "end": 1.839458
+  },
+  {
+    "word": "icon",
+    "start": 1.852625,
+    "end": 2.3526249999999997
+  },
+  {
+    "word": "the",
+    "start": 2.69475,
+    "end": 2.8
+  },
+  {
+    "word": "World",
+    "start": 2.813166,
+    "end": 3.155291
+  },
+  {
+    "word": "Cup",
+    "start": 3.168416,
+    "end": 3.4578740000000003
+  },
+  {
+    "word": "remains",
+    "start": 3.471041,
+    "end": 3.905249
+  },
+  {
+    "word": "the",
+    "start": 3.918416,
+    "end": 4.023666
+  },
+  {
+    "word": "ultimate",
+    "start": 4.036833,
+    "end": 4.549999
+  },
+  {
+    "word": "testament",
+    "start": 4.563166,
+    "end": 5.168416
+  },
+  {
+    "word": "to",
+    "start": 5.181583,
+    "end": 5.273708
   },
   {
     "word": "human",
-    "start": 5.431583,
-    "end": 5.826333
+    "start": 5.286833,
+    "end": 5.681583
   },
   {
     "word": "athletic",
-    "start": 5.839458,
-    "end": 6.352624
+    "start": 5.69475,
+    "end": 6.19475
   },
   {
     "word": "ambition",
-    "start": 6.365791,
-    "end": 6.997374
+    "start": 6.207875,
+    "end": 6.865749999999999
+  },
+  {
+    "word": "and",
+    "start": 6.878958,
+    "end": 7.036833
+  },
+  {
+    "word": "enduring",
+    "start": 7.05,
+    "end": 7.536833
+  },
+  {
+    "word": "national",
+    "start": 7.55,
+    "end": 8.010541
+  },
+  {
+    "word": "spirit",
+    "start": 8.023666,
+    "end": 8.628916
   }
 ]

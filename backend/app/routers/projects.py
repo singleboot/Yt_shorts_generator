@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -46,6 +46,7 @@ def create_project(project_data: dict, db: Session = Depends(get_db)):
         schedule_settings=project_data.get("schedule_settings", {}),
         seo_settings=project_data.get("seo_settings", {}),
         youtube_channel_id=project_data.get("youtube_channel_id"),
+        is_vlog=project_data.get("is_vlog", True),
     )
     db.add(project)
     db.commit()
@@ -216,7 +217,7 @@ def save_project(project_id: int, body: dict, db: Session = Depends(get_db)):
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    for key in ("source_type", "source_value", "category", "subcategory"):
+    for key in ("source_type", "source_value", "category", "subcategory", "host_image", "is_vlog"):
         if key in body:
             setattr(project, key, body[key])
     if "visual_settings" in body:
@@ -241,6 +242,110 @@ def save_project(project_id: int, body: dict, db: Session = Depends(get_db)):
         (base / sub).mkdir(parents=True, exist_ok=True)
 
     return {"status": "success", "message": "Project saved"}
+
+@router.get("/{project_id}/prompts/preview", response_model=list)
+def preview_project_prompts(project_id: int, db: Session = Depends(get_db)):
+    import json
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    visual_settings = project.visual_settings
+    if isinstance(visual_settings, str):
+        visual_settings = json.loads(visual_settings) if visual_settings else {}
+    elif not isinstance(visual_settings, dict):
+        visual_settings = {}
+
+    ai_style = visual_settings.get("ai_style", "none")
+    aspect_str = visual_settings.get("aspect_ratio", "vertical")
+    lora_name = visual_settings.get("lora_name", "None")
+    lora_strength = float(visual_settings.get("lora_strength", 0.5))
+
+    scripts = db.query(models.Script).filter(models.Script.project_id == project_id).all()
+    if not scripts:
+        return []
+
+    # Get newest script for each video index
+    script_by_index = {}
+    for s in scripts:
+        idx = s.video_index
+        if idx not in script_by_index or script_by_index[idx].id < s.id:
+            script_by_index[idx] = s
+
+    previews = []
+    import uuid
+    from datetime import datetime
+    for idx, script in sorted(script_by_index.items()):
+        scenes = script.scenes
+        if isinstance(scenes, str):
+            try: scenes = json.loads(scenes)
+            except: scenes = []
+
+        for scene_idx, scene in enumerate(scenes):
+            raw_prompt = scene.get("visual_description", "")
+            i2i_prompt = scene.get("i2i_prompt", "")
+            scene_type = scene.get("scene_type", "b_roll")
+
+            if getattr(project, "is_vlog", False):
+                trigger_prefix = ""
+            elif ai_style == "anime":
+                trigger_prefix = "anime 90s, 90s anime style, vintage hand-drawn anime, retro anime, aesthetic cell animation, "
+            elif ai_style == "watercolor":
+                trigger_prefix = "watercolor, brush strokes, artistic, vibrant, "
+            elif ai_style == "cyberpunk":
+                trigger_prefix = "cyberpunk, neon lights, dystopian, sci-fi, "
+            else:
+                trigger_prefix = ""
+
+            if aspect_str == "square":
+                aspect_term = "square 1:1, cinematic lighting, 1024x1024 resolution"
+            elif aspect_str == "horizontal":
+                aspect_term = "horizontal 16:9, cinematic lighting, 1280x720 resolution"
+            elif aspect_str == "horizontal_hd":
+                aspect_term = "horizontal 16:9, cinematic lighting, 1920x1080 resolution"
+            else:
+                aspect_term = "vertical 9:16, cinematic lighting, 720x1280 resolution"
+
+            suffix = f"25fps, high quality, {aspect_term}"
+            
+            host_image = getattr(project, "host_image", None)
+            
+            if getattr(project, "is_vlog", False) and scene_type == "host_talking" and host_image:
+                workflow_type = "i2v"
+                # For i2v vlog, we use i2i_prompt (which is typically just background info)
+                final_prompt = f"{trigger_prefix}{i2i_prompt}, {suffix}, purely visual, blank, pristine, symbol-free, clean video"
+                image_prompt_val = f"{trigger_prefix}{raw_prompt}, {suffix}, purely visual, blank, pristine, symbol-free, clean video"
+            else:
+                workflow_type = "t2v"
+                final_prompt = f"{trigger_prefix}{raw_prompt}, {suffix}, purely visual, blank, pristine, symbol-free, clean video"
+                image_prompt_val = None
+
+            preview = {
+                "id": f"preview-{script.id}-{scene_idx}",
+                "project_id": project_id,
+                "job_id": None,
+                "video_index": idx,
+                "scene_index": scene_idx,
+                "scene_number": scene.get("scene_number", scene_idx + 1),
+                "raw_visual_description": raw_prompt,
+                "sanitized_visual_description": raw_prompt,
+                "trigger_words": trigger_prefix.strip(", "),
+                "suffix": suffix,
+                "final_prompt": final_prompt.strip(", "),
+                "workflow_type": workflow_type,
+                "image_prompt": image_prompt_val.strip(", ") if image_prompt_val else None,
+                "host_image_path": host_image if workflow_type == "i2v" else None,
+                "lora_name": lora_name,
+                "lora_strength_model": lora_strength,
+                "lora_strength_clip": lora_strength,
+                "seed": 0,
+                "status": "preview",
+                "narration_text": scene.get("narration_text", ""),
+                "created_at": datetime.utcnow().isoformat(),
+            }
+            previews.append(preview)
+
+    return previews
 
 @router.post("/{project_id}/post", response_model=dict)
 def post_project(project_id: int, db: Session = Depends(get_db)):
@@ -604,6 +709,51 @@ def post_single_video(project_id: int, video_index: int, db: Session = Depends(g
         raise HTTPException(status_code=404, detail="Project not found")
     return scheduler_service.schedule_single_upload(project_id, video_index, db=db)
 
+@router.put("/{project_id}/videos/{video_index}/overrides", response_model=dict)
+def update_video_overrides(project_id: int, video_index: int, data: dict, db: Session = Depends(get_db)):
+    """Update per-video style/voice/music/research overrides without regenerating."""
+    script = db.query(models.Script).filter(
+        models.Script.project_id == project_id,
+        models.Script.video_index == video_index
+    ).first()
+    
+    overrides = {
+        "ai_style": data.get("ai_style"),
+        "voice_id": data.get("voice_id"),
+        "music_genre": data.get("music_genre"),
+        "lora_strength": data.get("lora_strength"),
+        "research_provider": data.get("research_provider"),
+    }
+    overrides = {k: v for k, v in overrides.items() if v is not None}
+    
+    if script:
+        existing_vo = script.video_overrides or {}
+        if isinstance(existing_vo, str):
+            try:
+                import json as _json
+                existing_vo = _json.loads(existing_vo)
+            except:
+                existing_vo = {}
+        merged = {**existing_vo, **overrides}
+        script.video_overrides = merged
+        db.commit()
+    else:
+        project = db.query(models.Project).filter(models.Project.id == project_id).first()
+        if project:
+            import json as _json
+            ss = project.schedule_settings
+            if isinstance(ss, str):
+                ss = _json.loads(ss) if ss else {}
+            elif not isinstance(ss, dict):
+                ss = {}
+            pending = ss.get("pending_overrides", {}) or {}
+            pending[str(video_index)] = {**(pending.get(str(video_index), {}) or {}), **overrides}
+            ss["pending_overrides"] = pending
+            project.schedule_settings = ss
+            db.commit()
+            
+    return {"status": "success", "overrides": overrides}
+
 @router.put("/{project_id}/videos/{video_index}/settings", response_model=dict)
 def update_video_settings(project_id: int, video_index: int, data: dict, db: Session = Depends(get_db)):
     """Update per-video style/voice/music overrides and regenerate."""
@@ -615,6 +765,7 @@ def update_video_settings(project_id: int, video_index: int, data: dict, db: Ses
         "voice_id": data.get("voice_id"),
         "music_genre": data.get("music_genre"),
         "lora_strength": data.get("lora_strength"),
+        "research_provider": data.get("research_provider"),
     }
     overrides = {k: v for k, v in overrides.items() if v is not None}
     return scheduler_service.regenerate_video(project_id, video_index, overrides)
@@ -644,6 +795,7 @@ def trending_topics(body: dict = {}, db: Session = Depends(get_db)):
     from app.services.research import research_service
     category = body.get("category", "tech")
     project_id = body.get("project_id", 0)
+    source = body.get("source", "web")
     # Run the async coroutine. asyncio.run is the cleanest entry point and
     # works correctly with thread-locals (the service opens its own session
     # to avoid SQLAlchemy session-in-thread issues).
@@ -651,9 +803,10 @@ def trending_topics(body: dict = {}, db: Session = Depends(get_db)):
         topics = _aio.run(research_service.trending_topics(
             category=category,
             project_id=project_id,
+            source=source,
         ))
     except Exception:
-        topics = _aio.run(research_service.trending_topics(category))
+        topics = _aio.run(research_service.trending_topics(category, source=source))
     return {"status": "success", "topics": topics}
 
 @router.post("/{project_id}/trending-now", response_model=dict)
@@ -669,6 +822,7 @@ def trending_now(project_id: int, body: dict = {}, db: Session = Depends(get_db)
         raise HTTPException(status_code=404, detail="Project not found")
 
     category = body.get("category", project.category)
+    source = body.get("source", "web")
 
     def run_async(coro):
         try:
@@ -685,7 +839,7 @@ def trending_now(project_id: int, body: dict = {}, db: Session = Depends(get_db)
     # Don't pass db: the asyncio coroutine runs in a worker thread and a
     # SQLAlchemy session is not safe to share across threads. The service
     # opens its own session.
-    trending = run_async(research_service.trending_topics(category, project_id=project_id))
+    trending = run_async(research_service.trending_topics(category, project_id=project_id, source=source))
     if not trending:
         trending = run_async(research_service.suggest_topics(
             category, "trending viral topics right now", project_id=project_id
@@ -740,15 +894,27 @@ def trending_now(project_id: int, body: dict = {}, db: Session = Depends(get_db)
             f"{trending_topic} part {i + 1}", category,
             db=db, project_id=project_id, video_index=i
         ))
+        ai_style = "none"
+        if isinstance(project.visual_settings, dict):
+            ai_style = project.visual_settings.get("ai_style", "none")
+        elif isinstance(project.visual_settings, str):
+            import json as _json
+            try:
+                vs = _json.loads(project.visual_settings)
+                ai_style = vs.get("ai_style", "none")
+            except:
+                pass
+                
         script_data = run_async(script_service.generate_script(
             topic=research["topic"], category=category,
-            context=research["context"], duration=duration
+            context=research["context"], duration=duration,
+            style=ai_style, is_vlog=getattr(project, "is_vlog", False)
         ))
         max_serial = db.query(func.max(models.Script.global_serial)).scalar() or 0
         script = models.Script(
             project_id=project_id,
             title=script_data.get("title", research["topic"]),
-            content=script_data.get("hook", "") + "\n\n" + "\n".join([s["narration_text"] for s in script_data.get("scenes", [])]),
+            content=script_data.get("hook", "") + "\n\n" + "\n".join([s.get("narration_text", "") for s in script_data.get("scenes", [])]),
             scenes=script_data.get("scenes", []),
             hashtags=",".join(script_data.get("hashtags", [])),
             status="approved",
@@ -928,15 +1094,27 @@ def generate_scripts(project_id: int, body: GenerateScriptsRequest = Body(Genera
     ).scalar()
     start_index = max_index + 1 if max_index is not None else 0
 
+    # Build compiled context from project sources if they exist
+    sources = project.sources
+    compiled_context = None
+    if sources:
+        compiled_parts = []
+        for src in sources:
+            compiled_parts.append(f"=== SOURCE: {src.source_name} ({src.source_type}) ===\n{src.content or ''}")
+        compiled_context = "\n\n".join(compiled_parts)
+
     results = []
     for offset in range(video_count):
         i = start_index + offset
 
-        if project.source_type == "url" and project.source_value:
+        if compiled_context:
+            topic = f"{project.name} part {i + 1}"
+            context = compiled_context
+        elif project.source_type == "url" and project.source_value:
             web_content = run_async(research_service.summarize_webpage(
                 project.source_value, db=db, project_id=project_id, video_index=i
             ))
-            topic = f"{project.source_value} part {i + 1}"
+            topic = f"{project.name} part {i + 1}"
             context = web_content
         elif project.source_type == "reddit" and project.source_value:
             reddit_data = run_async(research_service.get_reddit_story(project.source_value))
@@ -964,16 +1142,29 @@ def generate_scripts(project_id: int, body: GenerateScriptsRequest = Body(Genera
             prev_context_list.append(f"--- PREVIOUS PART {ps.video_index + 1} SCRIPT ---\nTitle: {ps.title}\nContent:\n{ps.content}")
         prev_scripts_context = "\n\n".join(prev_context_list)
 
+        ai_style = "none"
+        if isinstance(project.visual_settings, dict):
+            ai_style = project.visual_settings.get("ai_style", "none")
+        elif isinstance(project.visual_settings, str):
+            import json as _json
+            try:
+                vs = _json.loads(project.visual_settings)
+                ai_style = vs.get("ai_style", "none")
+            except:
+                pass
+
         script_data = run_async(script_service.generate_script(
             topic=topic,
             category=project.category,
             context=context,
             duration=duration,
+            style=ai_style,
             voice_id=voice_id,
             voice_custom=voice_custom,
             music_genre=music_genre,
             music_custom=music_custom,
-            prev_scripts_context=prev_scripts_context
+            prev_scripts_context=prev_scripts_context,
+            is_vlog=getattr(project, "is_vlog", False)
         ))
 
         max_serial = db.query(func.max(models.Script.global_serial)).scalar() or 0
@@ -988,7 +1179,7 @@ def generate_scripts(project_id: int, body: GenerateScriptsRequest = Body(Genera
         script = models.Script(
             project_id=project_id,
             title=script_data.get("title", topic),
-            content=script_data.get("hook", "") + "\n\n" + "\n".join([s["narration_text"] for s in script_data.get("scenes", [])]),
+            content=script_data.get("hook", "") + "\n\n" + "\n".join([s.get("narration_text", "") for s in script_data.get("scenes", [])]),
             scenes=script_data.get("scenes", []),
             hashtags=",".join(script_data.get("hashtags", [])),
             status="approved",
@@ -1096,17 +1287,29 @@ def add_new_videos(project_id: int, body: AddVideosRequest = Body(AddVideosReque
     ).scalar()
     start_index = max_index + 1 if max_index is not None else 0
 
+    # Build compiled context from project sources if they exist
+    sources = project.sources
+    compiled_context = None
+    if sources:
+        compiled_parts = []
+        for src in sources:
+            compiled_parts.append(f"=== SOURCE: {src.source_name} ({src.source_type}) ===\n{src.content or ''}")
+        compiled_context = "\n\n".join(compiled_parts)
+
     new_scripts = []
     new_indices = []
     for offset in range(count):
         i = start_index + offset
         new_indices.append(i)
 
-        if project.source_type == "url" and project.source_value:
+        if compiled_context:
+            topic = f"{project.name} part {i + 1}"
+            context = compiled_context
+        elif project.source_type == "url" and project.source_value:
             web_content = run_async(research_service.summarize_webpage(
                 project.source_value, db=db, project_id=project_id, video_index=i
             ))
-            topic = f"{project.source_value} part {i + 1}"
+            topic = f"{project.name} part {i + 1}"
             context = web_content
         else:
             research = run_async(research_service.research_topic(
@@ -1127,16 +1330,29 @@ def add_new_videos(project_id: int, body: AddVideosRequest = Body(AddVideosReque
             prev_context_list.append(f"--- PREVIOUS PART {ps.video_index + 1} SCRIPT ---\nTitle: {ps.title}\nContent:\n{ps.content}")
         prev_scripts_context = "\n\n".join(prev_context_list)
 
+        ai_style = "none"
+        if isinstance(project.visual_settings, dict):
+            ai_style = project.visual_settings.get("ai_style", "none")
+        elif isinstance(project.visual_settings, str):
+            import json as _json
+            try:
+                vs = _json.loads(project.visual_settings)
+                ai_style = vs.get("ai_style", "none")
+            except:
+                pass
+
         script_data = run_async(script_service.generate_script(
             topic=topic,
             category=project.category,
             context=context,
             duration=duration,
+            style=ai_style,
             voice_id=voice_id,
             voice_custom=voice_custom,
             music_genre=music_genre,
             music_custom=music_custom,
-            prev_scripts_context=prev_scripts_context
+            prev_scripts_context=prev_scripts_context,
+            is_vlog=getattr(project, "is_vlog", True)
         ))
 
         max_serial = db.query(func.max(models.Script.global_serial)).scalar() or 0
@@ -1150,7 +1366,7 @@ def add_new_videos(project_id: int, body: AddVideosRequest = Body(AddVideosReque
         script = models.Script(
             project_id=project_id,
             title=script_data.get("title", topic),
-            content=script_data.get("hook", "") + "\n\n" + "\n".join([s["narration_text"] for s in script_data.get("scenes", [])]),
+            content=script_data.get("hook", "") + "\n\n" + "\n".join([s.get("narration_text", "") for s in script_data.get("scenes", [])]),
             scenes=script_data.get("scenes", []),
             hashtags=",".join(script_data.get("hashtags", [])),
             status="approved",
@@ -1208,6 +1424,23 @@ def add_new_videos(project_id: int, body: AddVideosRequest = Body(AddVideosReque
     }
 
 
+@router.put("/{project_id}/videos/{video_index}/script-title", response_model=dict)
+def update_script_title(project_id: int, video_index: int, data: dict, db: Session = Depends(get_db)):
+    """Update only the script title for a video index."""
+    script = db.query(models.Script).filter(
+        models.Script.project_id == project_id,
+        models.Script.video_index == video_index
+    ).first()
+    if not script:
+        raise HTTPException(status_code=404, detail="Script not found")
+    new_title = data.get("title", "").strip()
+    if not new_title:
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    script.title = new_title
+    db.commit()
+    db.refresh(script)
+    return {"status": "success", "title": script.title}
+
 @router.post("/{project_id}/videos/{video_index}/regenerate-script", response_model=dict)
 def regenerate_script(project_id: int, video_index: int, db: Session = Depends(get_db)):
     """Regenerate a single script for a video (no t2v)."""
@@ -1220,12 +1453,14 @@ def regenerate_script(project_id: int, video_index: int, db: Session = Depends(g
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Delete existing script + assets for this video_index
+    # Capture the existing script title (the specific subject of this script slot) before deleting
+    existing_title = None
     existing = db.query(models.Script).filter(
         models.Script.project_id == project_id,
         models.Script.video_index == video_index
     ).first()
     if existing:
+        existing_title = existing.title
         db.query(models.Asset).filter(models.Asset.script_id == existing.id).delete()
         db.delete(existing)
         db.commit()
@@ -1260,11 +1495,31 @@ def regenerate_script(project_id: int, video_index: int, db: Session = Depends(g
         except RuntimeError:
             return _aio.run(coro)
 
-    if project.source_type == "url" and project.source_value:
+    # Build compiled context from project sources if they exist
+    sources = project.sources
+    compiled_context = None
+    if sources:
+        compiled_parts = []
+        for src in sources:
+            compiled_parts.append(f"=== SOURCE: {src.source_name} ({src.source_type}) ===\n{src.content or ''}")
+        compiled_context = "\n\n".join(compiled_parts)
+
+    if compiled_context:
+        topic = f"{project.name} part {video_index + 1}"
+        context = compiled_context
+    elif existing_title:
+        topic = existing_title
+        research = run_async(research_service.research_topic(
+            topic,
+            project.category,
+            db=db, project_id=project_id, video_index=video_index
+        ))
+        context = research["context"]
+    elif project.source_type == "url" and project.source_value:
         web_content = run_async(research_service.summarize_webpage(
             project.source_value, db=db, project_id=project_id, video_index=video_index
         ))
-        topic = f"{project.source_value} part {video_index + 1}"
+        topic = f"{project.name} part {video_index + 1}"
         context = web_content
     else:
         research = run_async(research_service.research_topic(
@@ -1275,15 +1530,28 @@ def regenerate_script(project_id: int, video_index: int, db: Session = Depends(g
         topic = research["topic"]
         context = research["context"]
 
+    ai_style = "none"
+    if isinstance(project.visual_settings, dict):
+        ai_style = project.visual_settings.get("ai_style", "none")
+    elif isinstance(project.visual_settings, str):
+        import json as _json
+        try:
+            vs = _json.loads(project.visual_settings)
+            ai_style = vs.get("ai_style", "none")
+        except:
+            pass
+
     script_data = run_async(script_service.generate_script(
         topic=topic,
         category=project.category,
         context=context,
         duration=duration,
+        style=ai_style,
         voice_id=voice_id,
         voice_custom=voice_custom,
         music_genre=music_genre,
-        music_custom=music_custom
+        music_custom=music_custom,
+        is_vlog=getattr(project, "is_vlog", True)
     ))
 
     max_serial = db.query(func.max(models.Script.global_serial)).scalar() or 0
@@ -1298,7 +1566,7 @@ def regenerate_script(project_id: int, video_index: int, db: Session = Depends(g
     script = models.Script(
         project_id=project_id,
         title=script_data.get("title", topic),
-        content=script_data.get("hook", "") + "\n\n" + "\n".join([s["narration_text"] for s in script_data.get("scenes", [])]),
+        content=script_data.get("hook", "") + "\n\n" + "\n".join([s.get("narration_text", "") for s in script_data.get("scenes", [])]),
         scenes=script_data.get("scenes", []),
         hashtags=",".join(script_data.get("hashtags", [])),
         status="approved",
@@ -1620,6 +1888,7 @@ def list_video_scenes(project_id: int, video_index: int,
             "scene_number": i + 1,
             "has_clip": clip.exists(),
             "clip_path": str(clip) if clip.exists() else None,
+            "clip_url": f"/storage/{clip.relative_to(settings.STORAGE_DIR).as_posix()}" if clip.exists() else None,
             "narration": narration,
             "narration_preview": narration[:140] + ("..." if len(narration) > 140 else ""),
             "visual_description": visual_desc,
@@ -1801,6 +2070,108 @@ def get_project_calendar_day(project_id: int, datestr: str, db: Session = Depend
     }
 
 
+@router.get("/{project_id}/sources", response_model=list)
+def list_project_sources(project_id: int, db: Session = Depends(get_db)):
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    sources = db.query(models.ProjectSource).filter(models.ProjectSource.project_id == project_id).order_by(models.ProjectSource.created_at.desc()).all()
+    return [{
+        "id": s.id,
+        "project_id": s.project_id,
+        "source_type": s.source_type,
+        "source_name": s.source_name,
+        "source_value": s.source_value,
+        "content_length": len(s.content) if s.content else 0,
+        "created_at": s.created_at.isoformat()
+    } for s in sources]
+
+
+@router.post("/{project_id}/sources", response_model=dict)
+async def add_project_source(
+    project_id: int,
+    source_type: str = Form(...),
+    source_value: str = Form(None),
+    file: UploadFile = File(None),
+    db: Session = Depends(get_db)
+):
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    content = ""
+    source_name = source_value or ""
+
+    from app.services.research import research_service
+    if source_type == "webpage":
+        if not source_value:
+            raise HTTPException(status_code=400, detail="URL is required for webpage source")
+        content = await research_service.summarize_webpage(source_value)
+        source_name = source_value.split("//")[-1].split("?")[0]
+    elif source_type == "youtube_url":
+        if not source_value:
+            raise HTTPException(status_code=400, detail="YouTube URL is required")
+        content = await research_service.get_youtube_transcript(source_value)
+        source_name = f"YouTube: {source_value.split('v=')[-1].split('&')[0]}" if "v=" in source_value else "YouTube Video"
+    elif source_type == "pdf":
+        if not file:
+            raise HTTPException(status_code=400, detail="PDF file is required")
+        pdf_dir = settings.PROJECTS_DIR / str(project_id) / "sources"
+        pdf_dir.mkdir(parents=True, exist_ok=True)
+        pdf_path = pdf_dir / file.filename
+        with open(pdf_path, "wb") as f:
+            f.write(await file.read())
+        
+        content = research_service.extract_pdf_text(str(pdf_path))
+        source_name = file.filename
+        source_value = str(pdf_path)
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported source type: {source_type}")
+
+    source = models.ProjectSource(
+        project_id=project_id,
+        source_type=source_type,
+        source_name=source_name,
+        source_value=source_value or "",
+        content=content
+    )
+    db.add(source)
+    db.commit()
+    db.refresh(source)
+
+    return {
+        "status": "success",
+        "source": {
+            "id": source.id,
+            "source_type": source.source_type,
+            "source_name": source.source_name
+        }
+    }
+
+
+@router.delete("/{project_id}/sources/{source_id}", response_model=dict)
+def delete_project_source(project_id: int, source_id: int, db: Session = Depends(get_db)):
+    source = db.query(models.ProjectSource).filter(
+        models.ProjectSource.id == source_id,
+        models.ProjectSource.project_id == project_id
+    ).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+    
+    if source.source_type == "pdf" and source.source_value:
+        try:
+            from pathlib import Path
+            p = Path(source.source_value)
+            if p.exists():
+                p.unlink()
+        except Exception:
+            pass
+
+    db.delete(source)
+    db.commit()
+    return {"status": "success", "message": "Source deleted"}
+
+
 def _project_to_dict(project):
     import json as _json
     def _parse(val):
@@ -1822,6 +2193,8 @@ def _project_to_dict(project):
         "category": project.category,
         "subcategory": project.subcategory,
         "visual_type": project.visual_type,
+        "host_image": project.host_image,
+        "is_vlog": getattr(project, "is_vlog", True),
         "visual_settings": _parse(project.visual_settings),
         "audio_settings": _parse(project.audio_settings),
         "caption_settings": _parse(project.caption_settings),

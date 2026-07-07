@@ -66,7 +66,7 @@ def upload_now(upload_id: int, db: Session = Depends(get_db)):
         title=upload.title or "Untitled Short",
         description=upload.description or "",
         tags=upload.tags.split(",") if upload.tags else [],
-        privacy_status="private",
+        privacy_status="public",
         publish_at=None,
         thumbnail_path=upload.thumbnail_path
     )
